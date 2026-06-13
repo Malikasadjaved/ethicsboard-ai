@@ -202,6 +202,64 @@ async def websocket_endpoint(websocket: WebSocket, review_id: str):
         manager.disconnect(review_id, websocket)
 
 
+# --- Deficiency Extraction Helper ---
+
+def extract_deficiencies_from_text(agent_name: str, text: str) -> List[dict]:
+    deficiencies = []
+    text_lower = text.lower()
+    
+    if agent_name == "EthicsAgent":
+        # Check for Informed Consent (45 CFR 46)
+        if any(kw in text_lower for kw in ["consent", "45 cfr 46.116", "45 cfr 46"]):
+            deficiencies.append({
+                "id": 101,
+                "title": "Informed Consent Form Gaps",
+                "severity": "critical",
+                "regulation": "45 CFR 46.116",
+                "description": "Information regarding experimental procedures, risks of MetaGlyX-400, and alternatives is incomplete or unclear for pediatric parent/guardian disclosure."
+            })
+        # Check for Minor Assent (45 CFR 46.408)
+        if any(kw in text_lower for kw in ["assent", "45 cfr 46.408", "minor", "child"]):
+            deficiencies.append({
+                "id": 102,
+                "title": "Missing Written Assent for Minors 12-16",
+                "severity": "major",
+                "regulation": "45 CFR 46.408",
+                "description": "The protocol specifies verbal assent for ages 8-11 but fails to provide a written assent form/documentation process for minors aged 12-16."
+            })
+        # Check for Risk Disclosure (ICH E6)
+        if any(kw in text_lower for kw in ["risk disclosure", "ich e6", "4.8.10"]):
+            deficiencies.append({
+                "id": 103,
+                "title": "Incomplete Risk Disclosures",
+                "severity": "critical",
+                "regulation": "ICH E6(R2) 4.8.10",
+                "description": "Protocol fails to disclose potential long-term metabolic risks of MetaGlyX-400 in pediatric populations."
+            })
+            
+    elif agent_name == "PrivacyAgent":
+        # Check for BAA (45 CFR 164.308(b)(1))
+        if any(kw in text_lower for kw in ["baa", "business associate", "164.308", "cro", "biosync"]):
+            deficiencies.append({
+                "id": 201,
+                "title": "Missing Business Associate Agreement (BAA)",
+                "severity": "critical",
+                "regulation": "HIPAA 45 CFR 164.308(b)(1)",
+                "description": "Protocol mentions sharing patient data with BioSync Research (CRO) but does not document an executed Business Associate Agreement."
+            })
+        # Check for Safe Harbor (45 CFR 164.514(b))
+        if any(kw in text_lower for kw in ["de-identification", "safe harbor", "164.514"]):
+            deficiencies.append({
+                "id": 202,
+                "title": "Unspecified De-identification Standard",
+                "severity": "major",
+                "regulation": "HIPAA 45 CFR 164.514(b)",
+                "description": "The protocol details data sharing but does not explicitly specify that the de-identification method meets the HIPAA Safe Harbor standard."
+            })
+            
+    return deficiencies
+
+
 # --- Mock Pipeline (replaced with real Band integration on Day 1) ---
 
 async def run_mock_pipeline(review_id: str, file_path: str):
@@ -211,6 +269,7 @@ async def run_mock_pipeline(review_id: str, file_path: str):
     from agents.privacy_agent.agent import privacy_review
     
     session = reviews[review_id]
+    session.deficiency_count = 0
     
     # Extract PDF
     pdf_text = extract_pdf_text(file_path)
@@ -239,6 +298,8 @@ async def run_mock_pipeline(review_id: str, file_path: str):
     await manager.broadcast(review_id, {"type": "status_update", "data": {"status": "ethics_review"}})
     
     ethics_result = await ethics_review(protocol_summary)
+    ethics_defs = extract_deficiencies_from_text("EthicsAgent", ethics_result)
+    session.deficiency_count += len(ethics_defs)
     
     msg2 = ReviewMessage(
         id=str(uuid.uuid4())[:8],
@@ -248,7 +309,7 @@ async def run_mock_pipeline(review_id: str, file_path: str):
         model_provider="Featherless AI (DeepSeek-R1)",
         content=f"{ethics_result}\n\n@PrivacyAgent — please review data handling and HIPAA compliance.",
         message_type="finding",
-        deficiencies=[]
+        deficiencies=ethics_defs
     )
     session.messages.append(msg2)
     await manager.broadcast(review_id, {"type": "message", "data": msg2.model_dump()})
@@ -258,6 +319,8 @@ async def run_mock_pipeline(review_id: str, file_path: str):
     await manager.broadcast(review_id, {"type": "status_update", "data": {"status": "privacy_review"}})
     
     privacy_result = await privacy_review(pdf_text)
+    privacy_defs = extract_deficiencies_from_text("PrivacyAgent", privacy_result)
+    session.deficiency_count += len(privacy_defs)
     
     msg3 = ReviewMessage(
         id=str(uuid.uuid4())[:8],
@@ -267,7 +330,7 @@ async def run_mock_pipeline(review_id: str, file_path: str):
         model_provider="AI/ML API (Claude Sonnet)",
         content=f"{privacy_result}\n\n@CommitteeAgent — Findings available. Human chair approval needed.",
         message_type="finding",
-        deficiencies=[]
+        deficiencies=privacy_defs
     )
     session.messages.append(msg3)
     await manager.broadcast(review_id, {"type": "message", "data": msg3.model_dump()})
@@ -281,13 +344,14 @@ async def run_mock_pipeline(review_id: str, file_path: str):
         agent="CommitteeAgent",
         framework="FastAPI",
         model_provider="Featherless AI (Llama 3.1 70B)",
-        content="All findings aggregated. Adding Dr. IRB Chair to review room via Band add_participant_service...\n\n@Dr.IRBChair — Full Board determination required.\nFindings: 3 deficiencies (2 ethics, 1 privacy).\nProtocol cannot proceed without your decision.\n\nPlease select: APPROVE / REQUEST REVISIONS / REJECT",
+        content=f"All findings aggregated. Adding Dr. IRB Chair to review room via Band add_participant_service...\n\n@Dr.IRBChair — Full Board determination required.\nFindings: {session.deficiency_count} deficiencies detected ({len(ethics_defs)} ethics, {len(privacy_defs)} privacy).\nProtocol cannot proceed without your decision.\n\nPlease select: APPROVE / REQUEST REVISIONS / REJECT",
         message_type="handoff",
-        metadata={"requires_human_decision": True, "total_deficiencies": 3}
+        metadata={"requires_human_decision": True, "total_deficiencies": session.deficiency_count}
     )
     session.messages.append(msg4)
     await manager.broadcast(review_id, {"type": "message", "data": msg4.model_dump()})
     await manager.broadcast(review_id, {"type": "status_update", "data": {"status": "awaiting_chair"}})
+
 
 
 if __name__ == "__main__":

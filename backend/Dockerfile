@@ -13,11 +13,13 @@ RUN pip install --no-cache-dir --default-timeout=100 -r requirements.txt
 # Copy the entire workspace
 COPY . .
 
-# Set pythonpath
+# Set pythonpath and disable stdout buffering
 ENV PYTHONPATH=/app
+ENV PYTHONUNBUFFERED=1
 
 # Expose backend port
 EXPOSE 8000
 
 # Run the backend server
 CMD ["python", "backend/server.py"]
+

@@ -1,6 +1,14 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { FileCode2, Eye, Fingerprint, GitMerge } from 'lucide-react';
+
+const iconMap = {
+  protocol: FileCode2,
+  ethics: Eye,
+  privacy: Fingerprint,
+  committee: GitMerge,
+};
 
 interface AgentCardProps {
   name: string;
@@ -98,13 +106,17 @@ export default function AgentCard({ name, framework, model, provider, status, ic
         <div className="flex items-start justify-between mb-3">
           {/* Agent Icon */}
           <div
-            className="w-12 h-12 rounded-xl flex items-center justify-center text-2xl border transition-all duration-300"
+            className="w-12 h-12 rounded-xl flex items-center justify-center border transition-all duration-300 relative group-hover:scale-105"
             style={{
               backgroundColor: `${color}15`,
               borderColor: `${color}30`,
+              boxShadow: `0 0 15px -3px ${color}20`,
             }}
           >
-            {icon}
+            {(() => {
+              const IconComponent = iconMap[icon as keyof typeof iconMap] || FileCode2;
+              return <IconComponent className="w-5 h-5" style={{ color: color }} strokeWidth={1.5} />;
+            })()}
           </div>
 
           {/* Status Indicator */}
@@ -117,9 +129,10 @@ export default function AgentCard({ name, framework, model, provider, status, ic
                 />
               )}
               <span
-                className="relative inline-flex rounded-full h-2 w-2"
+                className="relative inline-flex rounded-full h-2 w-2 shadow-[0_0_8px_currentColor]"
                 style={{
                   backgroundColor: status === 'active' ? color : status === 'complete' ? '#10b981' : status === 'error' ? '#ef4444' : '#475569',
+                  color: status === 'active' ? color : status === 'complete' ? '#10b981' : status === 'error' ? '#ef4444' : '#475569',
                 }}
               />
             </span>
@@ -132,7 +145,7 @@ export default function AgentCard({ name, framework, model, provider, status, ic
         </div>
 
         {/* Agent Name */}
-        <h3 className="text-sm font-bold text-white mb-1 tracking-wide">{name}</h3>
+        <h3 className="text-base font-extrabold text-white mb-1 tracking-wide group-hover:text-indigo-200 transition-colors">{name}</h3>
 
         {/* Framework & Model Badges */}
         <div className="flex flex-wrap gap-1.5 mb-3">
@@ -152,8 +165,8 @@ export default function AgentCard({ name, framework, model, provider, status, ic
         </div>
 
         {/* Provider */}
-        <div className="flex items-center gap-1 text-[10px] text-slate-500">
-          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
+        <div className="flex items-center gap-1 text-[10px] text-slate-500/80 font-medium">
+          <svg className="w-3 h-3 text-slate-600" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" d="M5.25 14.25h13.5m-13.5 0a3 3 0 01-3-3m3 3a3 3 0 100 6h13.5a3 3 0 100-6m-16.5-3a3 3 0 013-3h13.5a3 3 0 013 3m-19.5 0a4.5 4.5 0 01.9-2.7L5.737 5.1a3.375 3.375 0 012.7-1.35h7.126c1.062 0 2.062.5 2.7 1.35l2.587 3.45a4.5 4.5 0 01.9 2.7m0 0a3 3 0 01-3 3m0 3h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008zm-3 6h.008v.008h-.008v-.008zm0-6h.008v.008h-.008v-.008z" />
           </svg>
           <span>{provider}</span>

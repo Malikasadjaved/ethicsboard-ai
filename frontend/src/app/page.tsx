@@ -51,7 +51,7 @@ const AGENTS = [
     framework: "LangGraph",
     model: "Gemini 2.5 Pro",
     provider: "AI/ML API",
-    icon: "📄",
+    icon: "protocol",
     color: "#6366f1",
   },
   {
@@ -59,7 +59,7 @@ const AGENTS = [
     framework: "Pydantic AI",
     model: "DeepSeek-R1",
     provider: "Featherless AI",
-    icon: "⚖️",
+    icon: "ethics",
     color: "#a855f7",
   },
   {
@@ -67,7 +67,7 @@ const AGENTS = [
     framework: "CrewAI",
     model: "Claude Sonnet",
     provider: "AI/ML API",
-    icon: "🛡️",
+    icon: "privacy",
     color: "#06b6d4",
   },
   {
@@ -75,7 +75,7 @@ const AGENTS = [
     framework: "FastAPI",
     model: "Llama 3.1 70B",
     provider: "Featherless AI",
-    icon: "📊",
+    icon: "committee",
     color: "#f59e0b",
   },
 ];
@@ -225,7 +225,11 @@ export default function Dashboard() {
 
   // --- Render ---
   return (
-    <div className="min-h-screen bg-[#0a0a1a]">
+    <div className="min-h-screen bg-[#02020d] text-slate-100 relative overflow-hidden">
+      {/* Blurred radial glow effects for background depth */}
+      <div className="absolute top-0 left-0 w-[500px] h-[500px] rounded-full bg-indigo-500/5 blur-[120px] pointer-events-none -translate-x-1/2 -translate-y-1/2" />
+      <div className="absolute bottom-0 right-0 w-[600px] h-[600px] rounded-full bg-cyan-500/5 blur-[150px] pointer-events-none translate-x-1/3 translate-y-1/3" />
+
       <Header />
 
       {/* Main Content */}

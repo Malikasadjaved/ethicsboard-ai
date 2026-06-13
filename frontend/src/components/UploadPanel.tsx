@@ -99,10 +99,10 @@ export default function UploadPanel({ onUpload, isUploading }: UploadPanelProps)
                 border-2 border-dashed transition-all duration-300
                 flex flex-col items-center justify-center gap-3
                 ${isDragging
-                  ? 'border-indigo-500/60 bg-indigo-500/10 scale-[1.02] shadow-[0_0_30px_-5px_rgba(99,102,241,0.3)]'
+                  ? 'border-indigo-400 bg-indigo-500/20 scale-[1.02] shadow-[0_0_30px_0_rgba(99,102,241,0.4)]'
                   : file
-                    ? 'border-emerald-500/30 bg-emerald-500/5 hover:border-emerald-500/50'
-                    : 'border-[#2a2a5a]/60 bg-[#111128]/20 hover:border-indigo-500/40 hover:bg-indigo-500/5'
+                    ? 'border-emerald-500/40 bg-emerald-500/10 hover:border-emerald-500/60 hover:shadow-[0_0_20px_-5px_rgba(16,185,129,0.3)]'
+                    : 'border-indigo-500/30 bg-indigo-950/15 hover:border-indigo-500/60 hover:bg-indigo-950/30 hover:shadow-[0_0_25px_-5px_rgba(99,102,241,0.25)]'
                 }
               `}
             >

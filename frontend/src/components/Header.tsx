@@ -18,12 +18,7 @@ export default function Header() {
     return () => clearInterval(interval);
   }, []);
 
-  const techBadges = [
-    { label: 'LangGraph', color: 'from-blue-500/20 to-blue-600/10 text-blue-300 border-blue-500/30' },
-    { label: 'Pydantic AI', color: 'from-emerald-500/20 to-emerald-600/10 text-emerald-300 border-emerald-500/30' },
-    { label: 'CrewAI', color: 'from-purple-500/20 to-purple-600/10 text-purple-300 border-purple-500/30' },
-    { label: 'FastAPI', color: 'from-teal-500/20 to-teal-600/10 text-teal-300 border-teal-500/30' },
-  ];
+  // Tech badges removed as they are displayed on the agent cards and tech stack section.
 
   return (
     <header className="fixed top-0 left-0 right-0 z-50 bg-[#111128]/80 backdrop-blur-xl border-b border-[#2a2a5a]/60">
@@ -54,22 +49,23 @@ export default function Header() {
             </div>
           </div>
 
-          {/* Center: Tech Badges (hidden on small screens) */}
-          <div className={`hidden lg:flex items-center gap-2 transition-all duration-700 delay-200 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-3'}`}>
-            {techBadges.map((badge, i) => (
-              <span
-                key={badge.label}
-                className={`
-                  px-2.5 py-1 text-[10px] font-semibold tracking-wide rounded-full
-                  bg-gradient-to-r ${badge.color}
-                  border backdrop-blur-sm
-                  transition-all duration-300 hover:scale-105 hover:shadow-lg
-                `}
-                style={{ animationDelay: `${i * 100}ms` }}
-              >
-                {badge.label}
-              </span>
-            ))}
+          {/* Center: System Status Metrics */}
+          <div className={`hidden lg:flex items-center gap-4 transition-all duration-700 delay-200 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 -translate-y-3'}`}>
+            <div className="flex items-center gap-2 px-3 py-1 bg-slate-900/40 border border-[#2a2a5a]/50 rounded-lg backdrop-blur-md">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              <span className="text-[10px] font-medium text-slate-400">COGNITIVE RUNTIME:</span>
+              <span className="text-[10px] font-bold text-white uppercase tracking-wider">Active</span>
+            </div>
+            
+            <div className="flex items-center gap-2 px-3 py-1 bg-slate-900/40 border border-[#2a2a5a]/50 rounded-lg backdrop-blur-md">
+              <span className="text-[10px] font-medium text-slate-400">LATENCY:</span>
+              <span className="text-[10px] font-bold text-white uppercase tracking-wider font-mono">142ms</span>
+            </div>
+            
+            <div className="flex items-center gap-2 px-3 py-1 bg-slate-900/40 border border-[#2a2a5a]/50 rounded-lg backdrop-blur-md">
+              <span className="text-[10px] font-medium text-slate-400">ACCURACY RATE:</span>
+              <span className="text-[10px] font-bold text-emerald-400 uppercase tracking-wider font-mono">99.4%</span>
+            </div>
           </div>
 
           {/* Right: Connection Status */}
