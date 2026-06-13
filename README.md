@@ -3,6 +3,15 @@
 ### Regulated Multi-Agent IRB Review Platform
 **Built for the Band of Agents Hackathon (Track 3: Regulated & High-Stakes Workflows)**
 
+<p>
+  <img alt="Status" src="https://img.shields.io/badge/status-hackathon%20demo-6366f1">
+  <img alt="Python" src="https://img.shields.io/badge/python-3.11+-3776AB?logo=python&logoColor=white">
+  <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-backend-009688?logo=fastapi&logoColor=white">
+  <img alt="Next.js" src="https://img.shields.io/badge/Next.js-16-000000?logo=nextdotjs&logoColor=white">
+  <img alt="Docker" src="https://img.shields.io/badge/Docker-compose-2496ED?logo=docker&logoColor=white">
+  <img alt="Multi-agent" src="https://img.shields.io/badge/agents-4%20specialists-a855f7">
+</p>
+
 EthicsBoard AI is an automated Institutional Review Board (IRB) review pipeline powered by cooperative agents. It accelerates human clinical trial protocols from weeks to minutes while enforcing strict compliance and regulatory audit trails.
 
 ---
