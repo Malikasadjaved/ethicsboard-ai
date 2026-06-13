@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 
 interface Deficiency {
   id: number;
@@ -40,6 +40,9 @@ const agentIcons: Record<string, string> = {
   CommitteeAgent: '🏛️',
   System: '⚙️',
 };
+
+// Long messages (e.g. the full protocol text) collapse past this length
+const TRUNCATE_AT = 420;
 
 function formatTimestamp(ts: string) {
   try {
@@ -97,16 +100,57 @@ function getMessageBorderType(content: string, messageType: string): 'deficiency
 export default function MessageFeed({ messages }: MessageFeedProps) {
   const feedRef = useRef<HTMLDivElement>(null);
   const [visibleMessages, setVisibleMessages] = useState<Set<string>>(new Set());
+  const [expandedMessages, setExpandedMessages] = useState<Set<string>>(new Set());
+  const [agentFilter, setAgentFilter] = useState<string>('all');
+  const [isAtBottom, setIsAtBottom] = useState(true);
+  // Count of messages that arrived while the user was scrolled up
+  const seenCountRef = useRef(0);
+  const [unseenCount, setUnseenCount] = useState(0);
 
-  // Auto-scroll to bottom on new messages
-  useEffect(() => {
+  const agentsPresent = useMemo(() => {
+    const seen: string[] = [];
+    messages.forEach((m) => {
+      if (!seen.includes(m.agent)) seen.push(m.agent);
+    });
+    return seen;
+  }, [messages]);
+
+  const filteredMessages = useMemo(
+    () => (agentFilter === 'all' ? messages : messages.filter((m) => m.agent === agentFilter)),
+    [messages, agentFilter]
+  );
+
+  const scrollToBottom = useCallback((smooth = true) => {
     if (feedRef.current) {
       feedRef.current.scrollTo({
         top: feedRef.current.scrollHeight,
-        behavior: 'smooth',
+        behavior: smooth ? 'smooth' : 'auto',
       });
     }
-  }, [messages]);
+  }, []);
+
+  const handleScroll = useCallback(() => {
+    const el = feedRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
+    setIsAtBottom(atBottom);
+    if (atBottom) {
+      seenCountRef.current = messages.length;
+      setUnseenCount(0);
+    }
+  }, [messages.length]);
+
+  // Auto-scroll only when the user is already at the bottom — don't yank the
+  // view away while they're reading earlier messages
+  useEffect(() => {
+    if (isAtBottom) {
+      scrollToBottom();
+      seenCountRef.current = messages.length;
+      setUnseenCount(0);
+    } else {
+      setUnseenCount(messages.length - seenCountRef.current);
+    }
+  }, [messages, isAtBottom, scrollToBottom]);
 
   // Animate messages in
   useEffect(() => {
@@ -120,23 +164,80 @@ export default function MessageFeed({ messages }: MessageFeedProps) {
     });
   }, [messages]);
 
+  const toggleExpanded = useCallback((id: string) => {
+    setExpandedMessages((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
   return (
-    <div className="flex flex-col h-full rounded-xl bg-[#0a0a1e]/60 backdrop-blur-md border border-[#2a2a5a]/50 overflow-hidden">
+    <div className="relative flex flex-col h-full rounded-xl bg-[#0a0a1e]/60 backdrop-blur-md border border-[#2a2a5a]/50 overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-[#2a2a5a]/50 bg-[#111128]/40">
         <div className="flex items-center gap-2">
           <div className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse" />
           <h2 className="text-sm font-bold text-white tracking-wide">Band Room</h2>
           <span className="text-[10px] text-slate-500 font-mono">LIVE</span>
+          <span className="hidden md:inline text-[9px] text-slate-600 font-mono uppercase tracking-wider pl-2 border-l border-[#2a2a5a]/60">
+            audit ledger
+          </span>
         </div>
         <span className="text-[10px] text-slate-500 font-mono">
-          {messages.length} messages
+          {agentFilter === 'all'
+            ? `${messages.length} messages`
+            : `${filteredMessages.length} / ${messages.length} messages`}
         </span>
       </div>
+
+      {/* Agent filter chips */}
+      {agentsPresent.length > 1 && (
+        <div className="flex items-center gap-1.5 px-4 py-2 border-b border-[#2a2a5a]/40 bg-[#0c0c22]/40 overflow-x-auto">
+          <button
+            onClick={() => setAgentFilter('all')}
+            className={`
+              flex-shrink-0 px-2.5 py-1 rounded-full text-[10px] font-semibold border transition-all duration-200
+              ${agentFilter === 'all'
+                ? 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40'
+                : 'bg-slate-800/40 text-slate-500 border-slate-700/40 hover:text-slate-300 hover:border-slate-600/60'
+              }
+            `}
+          >
+            All
+          </button>
+          {agentsPresent.map((agent) => {
+            const color = agentColors[agent] || '#64748b';
+            const active = agentFilter === agent;
+            const count = messages.filter((m) => m.agent === agent).length;
+            return (
+              <button
+                key={agent}
+                onClick={() => setAgentFilter(active ? 'all' : agent)}
+                className={`
+                  flex-shrink-0 flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-semibold border transition-all duration-200
+                  ${active ? '' : 'bg-slate-800/40 text-slate-500 border-slate-700/40 hover:text-slate-300 hover:border-slate-600/60'}
+                `}
+                style={active ? {
+                  backgroundColor: `${color}1a`,
+                  color,
+                  borderColor: `${color}55`,
+                } : undefined}
+              >
+                <span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: color }} />
+                {agent.replace('Agent', '')}
+                <span className={`font-mono ${active ? 'opacity-70' : 'text-slate-600'}`}>{count}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* Messages Container */}
       <div
         ref={feedRef}
+        onScroll={handleScroll}
         className="flex-1 overflow-y-auto px-4 py-3 space-y-3 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent"
         style={{
           scrollbarWidth: 'thin',
@@ -153,12 +254,29 @@ export default function MessageFeed({ messages }: MessageFeedProps) {
           </div>
         )}
 
-        {messages.map((msg, index) => {
+        {messages.length > 0 && filteredMessages.length === 0 && (
+          <div className="flex flex-col items-center justify-center h-full text-center py-12">
+            <p className="text-sm text-slate-500 font-medium">No messages from this agent yet</p>
+            <button
+              onClick={() => setAgentFilter('all')}
+              className="mt-2 text-xs text-indigo-400 hover:text-indigo-300 transition-colors"
+            >
+              Show all messages
+            </button>
+          </div>
+        )}
+
+        {filteredMessages.map((msg, index) => {
           const color = agentColors[msg.agent] || '#64748b';
           const agentIcon = agentIcons[msg.agent] || '🤖';
           const borderType = getMessageBorderType(msg.content, msg.message_type);
           const challengeKind = getChallengeKind(msg.content);
           const isVisible = visibleMessages.has(msg.id);
+          const isLong = msg.content.length > TRUNCATE_AT;
+          const isExpanded = expandedMessages.has(msg.id);
+          const displayContent = isLong && !isExpanded
+            ? `${msg.content.slice(0, TRUNCATE_AT).trimEnd()}…`
+            : msg.content;
 
           return (
             <div
@@ -230,15 +348,33 @@ export default function MessageFeed({ messages }: MessageFeedProps) {
                   </span>
 
                   {/* Timestamp */}
-                  <span className="ml-auto text-[10px] text-slate-600 font-mono opacity-0 group-hover:opacity-100 transition-opacity">
+                  <span className="ml-auto text-[10px] text-slate-600 font-mono opacity-40 group-hover:opacity-100 transition-opacity">
                     {formatTimestamp(msg.timestamp)}
                   </span>
                 </div>
 
                 {/* Message Content */}
-                <div className="text-[13px] text-slate-300 leading-relaxed pl-9">
-                  {highlightContent(msg.content)}
+                <div className="text-[13px] text-slate-300 leading-relaxed pl-9 whitespace-pre-wrap break-words">
+                  {highlightContent(displayContent)}
                 </div>
+
+                {/* Expand / collapse for long messages */}
+                {isLong && (
+                  <div className="pl-9 mt-1.5">
+                    <button
+                      onClick={() => toggleExpanded(msg.id)}
+                      className="inline-flex items-center gap-1 text-[11px] font-semibold text-indigo-400 hover:text-indigo-300 transition-colors"
+                    >
+                      {isExpanded ? 'Show less' : `Show full message (${(msg.content.length / 1000).toFixed(1)}k chars)`}
+                      <svg
+                        className={`w-3 h-3 transition-transform duration-300 ${isExpanded ? 'rotate-180' : ''}`}
+                        fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor"
+                      >
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" />
+                      </svg>
+                    </button>
+                  </div>
+                )}
 
                 {/* Inline Deficiencies */}
                 {msg.deficiencies && msg.deficiencies.length > 0 && (
@@ -271,6 +407,26 @@ export default function MessageFeed({ messages }: MessageFeedProps) {
           );
         })}
       </div>
+
+      {/* Jump-to-latest pill — appears when scrolled up and new messages arrive */}
+      {!isAtBottom && (
+        <button
+          onClick={() => scrollToBottom()}
+          className="
+            absolute bottom-6 left-1/2 -translate-x-1/2 z-10
+            flex items-center gap-1.5 px-3 py-1.5 rounded-full
+            bg-indigo-600/90 hover:bg-indigo-500/90 backdrop-blur-md
+            border border-indigo-400/40 shadow-lg shadow-indigo-500/30
+            text-[11px] font-semibold text-white
+            transition-all duration-300 animate-fade-in-up
+          "
+        >
+          <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" strokeWidth={2.5} stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M19.5 13.5L12 21m0 0l-7.5-7.5M12 21V3" />
+          </svg>
+          {unseenCount > 0 ? `${unseenCount} new message${unseenCount === 1 ? '' : 's'}` : 'Jump to latest'}
+        </button>
+      )}
 
       {/* Bottom gradient fade */}
       <div className="h-1 bg-gradient-to-r from-transparent via-indigo-500/20 to-transparent" />

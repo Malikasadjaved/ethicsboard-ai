@@ -94,6 +94,8 @@ export default function Dashboard() {
   const [reviewTrack, setReviewTrack] = useState<"expedited" | "full_board" | null>(null);
   const [escalated, setEscalated] = useState(false);
   const [bandRoomId, setBandRoomId] = useState<string | null>(null);
+  const [startTime, setStartTime] = useState<number | null>(null);
+  const [elapsedSec, setElapsedSec] = useState(0);
   const wsRef = useRef<WebSocket | null>(null);
 
   // --- Derive agent statuses from review status ---
@@ -152,6 +154,8 @@ export default function Dashboard() {
 
     const ws = new WebSocket(`${API_URL.replace("http", "ws")}/ws/review/${reviewId}`);
     wsRef.current = ws;
+    // Expose for the Header's connection indicator
+    (window as unknown as { __bandWebSocket?: WebSocket }).__bandWebSocket = ws;
 
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
@@ -195,6 +199,21 @@ export default function Dashboard() {
     };
   }, [reviewId]);
 
+  // --- Elapsed review timer (freezes at completion) ---
+  useEffect(() => {
+    if (!startTime || status === "idle" || status === "completed") return;
+    const timer = setInterval(() => {
+      setElapsedSec(Math.floor((Date.now() - startTime) / 1000));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [startTime, status]);
+
+  const formatElapsed = (sec: number) => {
+    const m = Math.floor(sec / 60);
+    const s = sec % 60;
+    return `${m}:${s.toString().padStart(2, "0")}`;
+  };
+
   // --- Fetch the real Band room ID (created asynchronously after upload) ---
   useEffect(() => {
     if (!reviewId || bandRoomId) return;
@@ -225,6 +244,8 @@ export default function Dashboard() {
       setReviewTrack(null);
       setEscalated(false);
       setBandRoomId(null);
+      setStartTime(Date.now());
+      setElapsedSec(0);
       setStatus("pending");
 
       try {
@@ -284,6 +305,79 @@ export default function Dashboard() {
         {status !== "idle" && (
           <div className="mb-6 animate-fade-in-up">
             <PipelineProgress currentStage={status} />
+          </div>
+        )}
+
+        {/* Review Complete Summary Banner */}
+        {status === "completed" && determination && (
+          <div className="mb-6 animate-fade-in-up">
+            <div
+              className={`glass rounded-xl p-5 border ${
+                determination === "approved"
+                  ? "border-emerald-500/30 shadow-[0_0_40px_-10px_rgba(16,185,129,0.25)]"
+                  : determination === "rejected"
+                  ? "border-red-500/30 shadow-[0_0_40px_-10px_rgba(239,68,68,0.25)]"
+                  : "border-amber-500/30 shadow-[0_0_40px_-10px_rgba(245,158,11,0.25)]"
+              }`}
+            >
+              <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+                <div className="flex items-center gap-3 flex-1">
+                  <div
+                    className={`w-12 h-12 rounded-xl flex items-center justify-center border ${
+                      determination === "approved"
+                        ? "bg-emerald-500/15 border-emerald-500/40"
+                        : determination === "rejected"
+                        ? "bg-red-500/15 border-red-500/40"
+                        : "bg-amber-500/15 border-amber-500/40"
+                    }`}
+                  >
+                    <span className="text-2xl">
+                      {determination === "approved" ? "✅" : determination === "rejected" ? "⛔" : "📝"}
+                    </span>
+                  </div>
+                  <div>
+                    <h2 className="text-base font-bold text-white">
+                      Review Complete —{" "}
+                      <span
+                        className={
+                          determination === "approved"
+                            ? "text-emerald-400"
+                            : determination === "rejected"
+                            ? "text-red-400"
+                            : "text-amber-400"
+                        }
+                      >
+                        {determination === "revisions_required"
+                          ? "Revisions Required"
+                          : determination.charAt(0).toUpperCase() + determination.slice(1)}
+                      </span>
+                    </h2>
+                    <p className="text-xs text-slate-400 mt-0.5">
+                      Chair determination recorded · full audit trail preserved in Band room
+                    </p>
+                  </div>
+                </div>
+                {/* Session stats */}
+                <div className="grid grid-cols-4 gap-3 sm:gap-5">
+                  {[
+                    { label: "Duration", value: formatElapsed(elapsedSec) },
+                    { label: "Messages", value: String(messages.length) },
+                    { label: "Findings", value: String(deficiencies.length) },
+                    {
+                      label: "Critical",
+                      value: String(deficiencies.filter((d) => d.severity === "critical").length),
+                    },
+                  ].map((stat) => (
+                    <div key={stat.label} className="text-center">
+                      <p className="text-lg font-bold text-white font-mono leading-tight">{stat.value}</p>
+                      <p className="text-[9px] text-slate-500 uppercase tracking-widest font-semibold mt-0.5">
+                        {stat.label}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            </div>
           </div>
         )}
 
@@ -372,6 +466,11 @@ export default function Dashboard() {
                           determination.slice(1)}
                     </span>
                   )}
+                  {status !== "completed" && startTime && (
+                    <span className="px-2.5 py-1 rounded-full text-xs font-mono text-slate-300 bg-slate-800/60 border border-slate-700/50 tabular-nums">
+                      ⏱ {formatElapsed(elapsedSec)}
+                    </span>
+                  )}
                   <span className="text-xs text-gray-500 font-mono" title={bandRoomId || undefined}>
                     {bandRoomId
                       ? `Band Room: ${bandRoomId.slice(0, 8)}…`
@@ -381,23 +480,13 @@ export default function Dashboard() {
               </div>
             )}
 
-            {/* Message Feed */}
+            {/* Message Feed (carries its own Band Room header) */}
             {status !== "idle" && (
-              <div className="animate-fade-in-up" style={{ animationDelay: "200ms" }}>
-                <div className="glass rounded-xl overflow-hidden">
-                  <div className="px-5 py-3 border-b border-[#2a2a5a] flex items-center justify-between">
-                    <h2 className="text-sm font-semibold text-white flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-                      Band Room — Live Review Feed
-                    </h2>
-                    <span className="text-xs text-gray-500">
-                      {messages.length} messages
-                    </span>
-                  </div>
-                  <div className="h-[500px]">
-                    <MessageFeed messages={messages} />
-                  </div>
-                </div>
+              <div
+                className="animate-fade-in-up h-[560px]"
+                style={{ animationDelay: "200ms" }}
+              >
+                <MessageFeed messages={messages} />
               </div>
             )}
           </div>

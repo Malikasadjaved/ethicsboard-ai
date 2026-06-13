@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useRef, useEffect } from 'react';
 
 interface UploadPanelProps {
   onUpload: (file: File) => void;
@@ -13,23 +13,23 @@ export default function UploadPanel({ onUpload, isUploading }: UploadPanelProps)
   const [uploadProgress, setUploadProgress] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Simulate progress when uploading
-  useState(() => {
-    if (isUploading) {
-      let progress = 0;
-      const interval = setInterval(() => {
-        progress += Math.random() * 15;
-        if (progress >= 95) {
-          progress = 95;
-          clearInterval(interval);
-        }
-        setUploadProgress(progress);
-      }, 300);
-      return () => clearInterval(interval);
-    } else {
+  // Simulate progress while the upload request is in flight
+  useEffect(() => {
+    if (!isUploading) {
       setUploadProgress(0);
+      return;
     }
-  });
+    let progress = 0;
+    const interval = setInterval(() => {
+      progress += Math.random() * 15;
+      if (progress >= 95) {
+        progress = 95;
+        clearInterval(interval);
+      }
+      setUploadProgress(progress);
+    }, 300);
+    return () => clearInterval(interval);
+  }, [isUploading]);
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
     e.preventDefault();
