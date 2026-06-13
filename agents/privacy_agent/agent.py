@@ -2,6 +2,7 @@ import os
 import asyncio
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
+from agents.llm_utils import call_llm_with_retry
 
 load_dotenv()
 
@@ -28,32 +29,32 @@ Return findings with regulatory citations for every gap you identify.
 Use plain ASCII only. No bullet characters, em-dashes, or special symbols."""
 
 async def privacy_review(protocol_text: str) -> str:
-    # 1. Try Claude on AIML
+    # 1. Try Claude on AIML with retries
     try:
-        response = await asyncio.wait_for(
-            client.chat.completions.create(
-                model="claude-sonnet-4-6",
-                messages=[
-                    {"role": "system", "content": PRIVACY_SYSTEM_PROMPT},
-                    {"role": "user", "content": f"Protocol text:\n{protocol_text}"}
-                ]
-            ),
-            timeout=15.0
+        response = await call_llm_with_retry(
+            client=client,
+            model="claude-sonnet-4-6",
+            messages=[
+                {"role": "system", "content": PRIVACY_SYSTEM_PROMPT},
+                {"role": "user", "content": f"Protocol text:\n{protocol_text}"}
+            ],
+            timeout=15.0,
+            max_retries=3
         )
         return response.choices[0].message.content
     except Exception as e:
         print(f"AIML Claude failed with: {e}. Falling back to Gemini 2.5 Pro...")
-        # 2. Try Gemini 2.5 Pro on AIML
+        # 2. Try Gemini 2.5 Pro on AIML with retries
         try:
-            response = await asyncio.wait_for(
-                client.chat.completions.create(
-                    model="google/gemini-2.5-pro",
-                    messages=[
-                        {"role": "system", "content": PRIVACY_SYSTEM_PROMPT},
-                        {"role": "user", "content": f"Protocol text:\n{protocol_text}"}
-                    ]
-                ),
-                timeout=15.0
+            response = await call_llm_with_retry(
+                client=client,
+                model="google/gemini-2.5-pro",
+                messages=[
+                    {"role": "system", "content": PRIVACY_SYSTEM_PROMPT},
+                    {"role": "user", "content": f"Protocol text:\n{protocol_text}"}
+                ],
+                timeout=15.0,
+                max_retries=3
             )
             return response.choices[0].message.content
         except Exception as e2:

@@ -22,6 +22,8 @@ featherless_client = AsyncOpenAI(
     base_url=os.getenv("FEATHERLESS_BASE_URL", "https://api.featherless.ai/v1"),
 )
 
+from agents.llm_utils import call_llm_with_retry
+
 COMMITTEE_MODEL = "meta-llama/Llama-3.1-70B-Instruct"
 
 # --- Determination Letter Prompt ---
@@ -78,9 +80,10 @@ async def generate_determination_letter(
     decision: str,
     chair_comments: str = ""
 ) -> str:
-    """Generate formal IRB determination letter using Llama 3.1."""
+    """Generate formal IRB determination letter using Llama 3.1 with retries."""
     try:
-        response = await featherless_client.chat.completions.create(
+        response = await call_llm_with_retry(
+            client=featherless_client,
             model=COMMITTEE_MODEL,
             messages=[
                 {"role": "system", "content": "You are an IRB Committee Coordinator. Generate formal, regulatory-compliant determination letters."},
@@ -92,6 +95,8 @@ async def generate_determination_letter(
             ],
             temperature=0.3,
             max_tokens=3000,
+            timeout=25.0,
+            max_retries=3
         )
         
         return response.choices[0].message.content

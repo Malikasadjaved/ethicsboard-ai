@@ -9,6 +9,7 @@ except ImportError:
 
 from dotenv import load_dotenv
 from openai import AsyncOpenAI
+from agents.llm_utils import call_llm_with_retry
 
 load_dotenv()
 geminimodel = os.getenv("GEMINI_MODEL", "google/gemini-2.5-pro")
@@ -42,11 +43,38 @@ Data retention: 15 years."""
 
 
 async def analyze_protocol(pdf_text: str) -> str:
-    # 1. Try Gemini 2.5 Pro on AIML
+    # 1. Try Gemini 2.5 Pro on AIML with retries
     try:
-        response = await asyncio.wait_for(
-            client.chat.completions.create(
-                model=geminimodel,
+        response = await call_llm_with_retry(
+            client=client,
+            model=geminimodel,
+            messages=[
+                {
+                    "role": "user",
+                    "content": f"""Analyze this research protocol and extract:
+                - Study title and protocol number
+                - Population (age range, vulnerable status)
+                - Risk classification (minimal or greater than minimal)
+                - Consent procedures described
+                - Data handling plan
+
+                Protocol text:
+                {pdf_text}
+
+                Return as structured JSON.""",
+                }
+            ],
+            timeout=15.0,
+            max_retries=3
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        print(f"AIML Gemini 2.5 Pro failed with: {e}. Falling back to Llama 3.3 70B...")
+        # 2. Try Llama 3.3 70B on AIML with retries
+        try:
+            response = await call_llm_with_retry(
+                client=client,
+                model="meta-llama/Llama-3.3-70B-Instruct",
                 messages=[
                     {
                         "role": "user",
@@ -63,35 +91,8 @@ async def analyze_protocol(pdf_text: str) -> str:
                     Return as structured JSON.""",
                     }
                 ],
-            ),
-            timeout=15.0,
-        )
-        return response.choices[0].message.content
-    except Exception as e:
-        print(f"AIML Gemini 2.5 Pro failed with: {e}. Falling back to Llama 3.3 70B...")
-        # 2. Try Llama 3.3 70B on AIML
-        try:
-            response = await asyncio.wait_for(
-                client.chat.completions.create(
-                    model="meta-llama/Llama-3.3-70B-Instruct",
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": f"""Analyze this research protocol and extract:
-                        - Study title and protocol number
-                        - Population (age range, vulnerable status)
-                        - Risk classification (minimal or greater than minimal)
-                        - Consent procedures described
-                        - Data handling plan
-
-                        Protocol text:
-                        {pdf_text}
-
-                        Return as structured JSON.""",
-                        }
-                    ],
-                ),
                 timeout=15.0,
+                max_retries=3
             )
             return response.choices[0].message.content
         except Exception as e2:
