@@ -1,8 +1,10 @@
 import os
+import asyncio
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
 
 load_dotenv()
+
 
 featherless_client = AsyncOpenAI(
     api_key=os.getenv("FEATHERLESS_API_KEY"),
