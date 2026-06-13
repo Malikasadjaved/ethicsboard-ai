@@ -1,0 +1,125 @@
+INSTITUTIONAL REVIEW BOARD PROTOCOL SUBMISSION
+==============================================
+
+Protocol Number: PEDI-2026-0047
+Version: 1.0 | Date: May 15, 2026
+
+Study Title: A Phase II, Randomized, Double-Blind, Placebo-Controlled Study
+to Evaluate the Efficacy and Safety of MetaGlyX-400 in Pediatric Patients
+with Type 2 Diabetes Mellitus
+
+Sponsor: NovaCure Therapeutics, Inc.
+Principal Investigator: Dr. Sarah Chen, MD, PhD
+  Department of Pediatric Endocrinology
+  University Medical Center
+
+1. STUDY OVERVIEW
+-----------------
+This Phase II randomized controlled trial evaluates MetaGlyX-400, a novel
+GLP-1/GIP dual receptor agonist, in pediatric patients aged 8-16 years with
+Type 2 Diabetes Mellitus (T2DM). The study will enroll approximately 120
+participants across 8 clinical sites.
+
+Duration: 52 weeks (12-week treatment + 40-week follow-up)
+Design: Double-blind, placebo-controlled, 2:1 randomization
+
+2. STUDY POPULATION
+-------------------
+Inclusion Criteria:
+- Age 8-16 years at screening
+- Diagnosed with T2DM per ADA criteria
+- HbA1c 7.0-11.0% at screening
+- BMI >= 85th percentile for age and sex
+
+Exclusion Criteria:
+- Type 1 diabetes or MODY
+- eGFR < 60 mL/min/1.73m2
+- Active hepatic disease (ALT > 3x ULN)
+- Pregnancy or lactation
+
+3. STUDY PROCEDURES
+-------------------
+Visit Schedule:
+- Screening (Week -2)
+- Baseline/Randomization (Week 0)
+- Treatment visits (Weeks 2, 4, 8, 12)
+- Follow-up visits (Weeks 16, 24, 36, 52)
+
+Primary Endpoint: Change in HbA1c from baseline to Week 12
+Secondary Endpoints: Fasting plasma glucose, body weight, BMI z-score
+
+4. RISK ASSESSMENT
+------------------
+Known Risks of MetaGlyX-400:
+- Gastrointestinal: Nausea (32%), vomiting (18%), diarrhea (12%)
+- Injection site reactions (8%)
+- Hypoglycemia when combined with insulin (5%)
+- HEPATIC: Elevated liver enzymes requiring monitoring every 4 weeks
+  with protocol-mandated discontinuation if ALT > 5x ULN
+  ** LONG-TERM HEPATIC MONITORING REQUIRED FOR 24 MONTHS POST-TREATMENT **
+
+Risk Classification: GREATER THAN MINIMAL RISK
+Regulatory Basis: 45 CFR 46.405 — Research involving greater than minimal
+risk but presenting the prospect of direct benefit to individual subjects.
+
+5. INFORMED CONSENT
+-------------------
+5.1 Parental/Guardian Consent
+Written informed consent will be obtained from at least one parent or
+legally authorized representative before any study procedures. The consent
+form describes study purpose, procedures, risks (GI effects, injection
+site reactions, hypoglycemia), alternatives, and voluntary participation.
+
+5.2 Participant Assent
+For participants aged 8-11 years: A simplified verbal explanation of
+the study will be provided using age-appropriate language. The child's
+willingness to participate will be assessed and documented.
+
+[NOTE: No written assent procedure is described for participants aged 12-16.
+The protocol does not address assent for adolescents capable of providing
+meaningful written assent.]
+
+[NOTE: The consent form does NOT disclose the long-term hepatic monitoring
+requirement described in Section 4. The consent form only mentions GI
+effects, injection site reactions, and hypoglycemia as risks.]
+
+6. DATA MANAGEMENT
+------------------
+6.1 De-identification
+All participant data will be coded using a unique alphanumeric identifier.
+No direct identifiers (name, DOB, SSN, MRN) will be stored in the study
+database. A crosswalk file linking codes to identifiers will be maintained
+in a separate, access-controlled system by the PI.
+
+6.2 Data Storage
+Electronic data will be stored on encrypted, HIPAA-compliant servers
+maintained by the University Medical Center IT department. Paper source
+documents will be stored in locked cabinets in the PI's office.
+
+Data retention period: 15 years from study completion, per FDA 21 CFR 11.
+
+6.3 Data Sharing
+Coded study data will be shared with BioSync Research, LLC (Contract
+Research Organization) for statistical analysis and monitoring. Data
+sharing is governed by a confidentiality agreement between the University
+and BioSync Research.
+
+[NOTE: The data sharing arrangement with BioSync Research is covered only
+by a confidentiality agreement, NOT a Business Associate Agreement (BAA)
+as required by HIPAA when sharing Protected Health Information.]
+
+7. SAFETY MONITORING
+--------------------
+A Data Safety Monitoring Board (DSMB) will review safety data quarterly.
+Serious Adverse Events (SAEs) will be reported to the IRB within 7 days.
+Non-serious adverse events will be reported within 15 days.
+
+8. INVESTIGATOR SIGNATURE
+-------------------------
+I certify that this protocol accurately describes the proposed research
+and that I will conduct the study in accordance with all applicable
+regulations, institutional policies, and ethical principles.
+
+Principal Investigator: Dr. Sarah Chen, MD, PhD
+Date: May 15, 2026
+Signature: [SIGNED]

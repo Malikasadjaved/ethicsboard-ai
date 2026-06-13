@@ -1,0 +1,1811 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>EthicsBoard AI — Research Ethics Review System</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:ital,wght@0,300;0,400;0,500;0,600;1,300&family=Playfair+Display:wght@400;500;600;700;900&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet" />
+
+<style>
+:root {
+  --bg:        #090912;
+  --surface:   #0e0e1a;
+  --surface2:  #141428;
+  --border:    rgba(255,255,255,0.07);
+  --border2:   rgba(0,212,255,0.18);
+  --accent:    #00d4ff;
+  --accent2:   #00ff9d;
+  --warn:      #ff6b6b;
+  --text:      #e8e8f0;
+  --muted:     #6b6b88;
+  --label:     #9090aa;
+
+  --mono:      'IBM Plex Mono', monospace;
+  --serif:     'Playfair Display', Georgia, serif;
+  --sans:      'IBM Plex Sans', sans-serif;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--sans);
+  font-weight: 300;
+  line-height: 1.6;
+  overflow-x: hidden;
+}
+
+/* ── Noise texture overlay ── */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.03'/%3E%3C/svg%3E");
+  pointer-events: none;
+  z-index: 999;
+  opacity: 0.4;
+}
+
+/* ── Grid lines ── */
+.grid-lines {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    linear-gradient(rgba(0,212,255,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,212,255,0.025) 1px, transparent 1px);
+  background-size: 60px 60px;
+}
+
+/* ── NAV ── */
+nav {
+  position: fixed;
+  top: 0; left: 0; right: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 48px;
+  background: rgba(9,9,18,0.85);
+  backdrop-filter: blur(12px);
+  border-bottom: 1px solid var(--border);
+}
+
+.nav-logo {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.nav-mark {
+  width: 28px; height: 28px;
+  border: 1.5px solid var(--accent);
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nav-mark svg { width: 14px; height: 14px; }
+
+.nav-name {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  color: var(--text);
+}
+
+.nav-name span { color: var(--accent); }
+
+.nav-links {
+  display: flex;
+  gap: 36px;
+  list-style: none;
+}
+
+.nav-links a {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-decoration: none;
+  transition: color 0.2s;
+}
+
+.nav-links a:hover { color: var(--accent); }
+
+.nav-badge {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--accent);
+  border: 1px solid var(--border2);
+  padding: 5px 12px;
+  border-radius: 2px;
+  background: rgba(0,212,255,0.05);
+}
+
+/* ── SECTIONS ── */
+section { position: relative; z-index: 1; }
+
+/* ── HERO ── */
+.hero {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  align-items: center;
+  padding: 120px 48px 80px;
+  gap: 60px;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+.hero-left { position: relative; }
+
+.hero-track {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.hero-track::before {
+  content: '';
+  width: 24px;
+  height: 1px;
+  background: var(--accent);
+  display: inline-block;
+}
+
+h1 {
+  font-family: var(--serif);
+  font-size: clamp(42px, 5vw, 68px);
+  font-weight: 700;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  margin-bottom: 28px;
+  color: var(--text);
+}
+
+h1 em {
+  font-style: italic;
+  color: var(--accent);
+}
+
+.hero-desc {
+  font-size: 15px;
+  font-weight: 300;
+  color: var(--label);
+  line-height: 1.75;
+  max-width: 460px;
+  margin-bottom: 40px;
+}
+
+.hero-stats {
+  display: flex;
+  gap: 36px;
+  margin-bottom: 44px;
+}
+
+.stat {
+  border-left: 2px solid var(--border2);
+  padding-left: 16px;
+}
+
+.stat-num {
+  font-family: var(--serif);
+  font-size: 30px;
+  font-weight: 600;
+  color: var(--text);
+  line-height: 1;
+  margin-bottom: 4px;
+}
+
+.stat-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.hero-cta {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+
+.btn-primary {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--bg);
+  background: var(--accent);
+  border: none;
+  padding: 14px 28px;
+  cursor: pointer;
+  border-radius: 2px;
+  text-decoration: none;
+  transition: opacity 0.2s, transform 0.15s;
+  display: inline-block;
+}
+
+.btn-primary:hover { opacity: 0.88; transform: translateY(-1px); }
+
+.btn-ghost {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+  text-decoration: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  transition: color 0.2s;
+}
+
+.btn-ghost:hover { color: var(--text); }
+
+/* ── Hero right: protocol card ── */
+.hero-right { position: relative; }
+
+.protocol-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 32px 80px rgba(0,0,0,0.5), 0 0 0 1px rgba(0,212,255,0.06);
+}
+
+.protocol-header {
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+  padding: 14px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.ph-dots { display: flex; gap: 6px; }
+.ph-dot {
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: var(--border);
+}
+.ph-dot:first-child { background: #ff5f57; }
+.ph-dot:nth-child(2) { background: #febc2e; }
+.ph-dot:nth-child(3) { background: #28c840; }
+
+.ph-title {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: 0.1em;
+}
+
+.ph-status {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--warn);
+  background: rgba(255,107,107,0.1);
+  border: 1px solid rgba(255,107,107,0.25);
+  padding: 3px 8px;
+  border-radius: 2px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  animation: pulse-warn 2s ease-in-out infinite;
+}
+
+@keyframes pulse-warn {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+.protocol-body { padding: 20px; }
+
+.proto-field {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+  padding: 9px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.proto-field:last-child { border-bottom: none; }
+
+.proto-key {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--muted);
+  letter-spacing: 0.08em;
+  min-width: 120px;
+  padding-top: 1px;
+}
+
+.proto-val {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--text);
+  line-height: 1.5;
+}
+
+.proto-val.accent { color: var(--accent); }
+.proto-val.warn    { color: var(--warn); font-weight: 500; }
+.proto-val.ok      { color: var(--accent2); }
+
+.tag {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 2px;
+  margin-right: 4px;
+}
+
+.tag-red  { background: rgba(255,107,107,0.12); color: var(--warn); border: 1px solid rgba(255,107,107,0.25); }
+.tag-blue { background: rgba(0,212,255,0.08); color: var(--accent); border: 1px solid var(--border2); }
+.tag-green{ background: rgba(0,255,157,0.08); color: var(--accent2); border: 1px solid rgba(0,255,157,0.2); }
+
+.deficiency-box {
+  margin-top: 16px;
+  background: rgba(255,107,107,0.05);
+  border: 1px solid rgba(255,107,107,0.2);
+  border-radius: 4px;
+  padding: 14px 16px;
+}
+
+.deficiency-title {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--warn);
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  margin-bottom: 10px;
+}
+
+.deficiency-item {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--label);
+  padding: 5px 0;
+  border-bottom: 1px solid rgba(255,107,107,0.1);
+  display: flex;
+  gap: 8px;
+  line-height: 1.5;
+}
+
+.deficiency-item:last-child { border-bottom: none; }
+.deficiency-item::before { content: '→'; color: var(--warn); flex-shrink: 0; }
+
+/* ── SECTION SHARED ── */
+.section-inner {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 100px 48px;
+}
+
+.section-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--accent);
+  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.section-label::before {
+  content: '';
+  width: 20px;
+  height: 1px;
+  background: var(--accent);
+}
+
+h2 {
+  font-family: var(--serif);
+  font-size: clamp(32px, 3.5vw, 50px);
+  font-weight: 600;
+  line-height: 1.1;
+  letter-spacing: -0.02em;
+  margin-bottom: 16px;
+  color: var(--text);
+}
+
+h2 em { font-style: italic; color: var(--accent); }
+
+.section-sub {
+  font-size: 14px;
+  color: var(--muted);
+  font-weight: 300;
+  max-width: 560px;
+  line-height: 1.7;
+  margin-bottom: 60px;
+}
+
+/* ── PROBLEM SECTION ── */
+.problem-section {
+  border-top: 1px solid var(--border);
+  background: linear-gradient(180deg, var(--surface) 0%, transparent 100%);
+}
+
+.problem-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 48px;
+  align-items: start;
+}
+
+.problem-text { padding-top: 20px; }
+
+.problem-text p {
+  font-size: 15px;
+  color: var(--label);
+  line-height: 1.8;
+  margin-bottom: 20px;
+  font-weight: 300;
+}
+
+.problem-text strong { color: var(--text); font-weight: 500; }
+
+.stat-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+  margin-top: 36px;
+}
+
+.stat-cell {
+  background: var(--surface);
+  padding: 24px 28px;
+  transition: background 0.2s;
+}
+
+.stat-cell:hover { background: var(--surface2); }
+
+.stat-cell-num {
+  font-family: var(--serif);
+  font-size: 36px;
+  font-weight: 700;
+  color: var(--accent);
+  line-height: 1;
+  margin-bottom: 6px;
+}
+
+.stat-cell-label {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* ── ROLES SECTION ── */
+.roles-section { border-top: 1px solid var(--border); }
+
+.roles-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.role-card {
+  background: var(--surface);
+  padding: 32px 28px;
+  position: relative;
+  transition: background 0.25s;
+  cursor: default;
+}
+
+.role-card:hover { background: var(--surface2); }
+
+.role-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 2px;
+  opacity: 0;
+  transition: opacity 0.25s;
+}
+
+.role-card:hover::before { opacity: 1; }
+
+.role-card.card-1::before { background: var(--accent); }
+.role-card.card-2::before { background: #a78bfa; }
+.role-card.card-3::before { background: #34d399; }
+.role-card.card-4::before { background: #fb923c; }
+
+.role-number {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: 0.15em;
+  margin-bottom: 20px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.role-icon {
+  width: 36px; height: 36px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  margin-bottom: 16px;
+  font-size: 16px;
+}
+
+.ic-1 { background: rgba(0,212,255,0.1); border: 1px solid rgba(0,212,255,0.2); }
+.ic-2 { background: rgba(167,139,250,0.1); border: 1px solid rgba(167,139,250,0.2); }
+.ic-3 { background: rgba(52,211,153,0.1); border: 1px solid rgba(52,211,153,0.2); }
+.ic-4 { background: rgba(251,146,60,0.1); border: 1px solid rgba(251,146,60,0.2); }
+
+.role-name {
+  font-family: var(--serif);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 6px;
+  line-height: 1.2;
+}
+
+.role-model {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.role-model::before {
+  content: '';
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.5;
+}
+
+.role-desc {
+  font-size: 13px;
+  color: var(--label);
+  line-height: 1.65;
+  font-weight: 300;
+  margin-bottom: 20px;
+}
+
+.role-responsibilities {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+
+.role-responsibilities li {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.5;
+  padding-left: 14px;
+  position: relative;
+}
+
+.role-responsibilities li::before {
+  content: '—';
+  position: absolute;
+  left: 0;
+  color: var(--border2);
+  font-size: 9px;
+}
+
+.role-band-badge {
+  margin-top: 20px;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: rgba(0,212,255,0.06);
+  border: 1px solid var(--border2);
+  padding: 4px 10px;
+  border-radius: 2px;
+}
+
+.role-band-badge::before {
+  content: '⬡';
+  font-size: 9px;
+}
+
+/* ── WORKFLOW SECTION ── */
+.workflow-section { border-top: 1px solid var(--border); }
+
+.band-room {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+  box-shadow: 0 40px 100px rgba(0,0,0,0.4);
+}
+
+.band-room-header {
+  background: var(--surface2);
+  border-bottom: 1px solid var(--border);
+  padding: 16px 24px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.band-room-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.band-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--accent2);
+  box-shadow: 0 0 8px var(--accent2);
+  animation: blink 2.2s ease-in-out infinite;
+}
+
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.band-room-name {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.band-room-sub {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.band-participants {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.band-avatar {
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  background: var(--surface);
+}
+
+.band-avatar.active { border-color: var(--accent); }
+
+.band-messages {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  max-height: 600px;
+  overflow-y: auto;
+}
+
+.band-messages::-webkit-scrollbar { width: 4px; }
+.band-messages::-webkit-scrollbar-track { background: transparent; }
+.band-messages::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+.msg {
+  display: flex;
+  gap: 14px;
+  padding: 12px 0;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  opacity: 0;
+  transform: translateY(8px);
+  animation: msg-in 0.4s ease forwards;
+}
+
+.msg:last-child { border-bottom: none; }
+
+@keyframes msg-in {
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.msg:nth-child(1)  { animation-delay: 0.1s; }
+.msg:nth-child(2)  { animation-delay: 0.4s; }
+.msg:nth-child(3)  { animation-delay: 0.9s; }
+.msg:nth-child(4)  { animation-delay: 1.5s; }
+.msg:nth-child(5)  { animation-delay: 2.2s; }
+.msg:nth-child(6)  { animation-delay: 3.0s; }
+.msg:nth-child(7)  { animation-delay: 3.8s; }
+.msg:nth-child(8)  { animation-delay: 4.6s; }
+.msg:nth-child(9)  { animation-delay: 5.2s; }
+
+.msg-avatar {
+  width: 32px; height: 32px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.av-researcher { background: rgba(255,255,255,0.06); }
+.av-protocol   { background: rgba(0,212,255,0.12); border: 1px solid rgba(0,212,255,0.2); }
+.av-ethics     { background: rgba(167,139,250,0.12); border: 1px solid rgba(167,139,250,0.2); }
+.av-privacy    { background: rgba(52,211,153,0.12); border: 1px solid rgba(52,211,153,0.2); }
+.av-committee  { background: rgba(251,146,60,0.12); border: 1px solid rgba(251,146,60,0.2); }
+.av-chair      { background: rgba(255,255,255,0.08); border: 1px solid rgba(255,255,255,0.15); }
+
+.msg-body { flex: 1; min-width: 0; }
+
+.msg-meta {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+.msg-sender {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.msg-sender.s-researcher { color: var(--text); }
+.msg-sender.s-protocol   { color: var(--accent); }
+.msg-sender.s-ethics     { color: #a78bfa; }
+.msg-sender.s-privacy    { color: #34d399; }
+.msg-sender.s-committee  { color: #fb923c; }
+.msg-sender.s-chair      { color: var(--text); }
+
+.msg-time {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--muted);
+}
+
+.msg-text {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--label);
+  line-height: 1.65;
+  word-break: break-word;
+}
+
+.msg-text .mention {
+  color: var(--accent);
+  font-weight: 500;
+}
+
+.msg-text .mention.m-ethics  { color: #a78bfa; }
+.msg-text .mention.m-privacy { color: #34d399; }
+.msg-text .mention.m-committee { color: #fb923c; }
+.msg-text .mention.m-chair   { color: #fbbf24; }
+
+.msg-text .code-line {
+  display: block;
+  color: var(--text);
+  margin: 3px 0;
+}
+
+.msg-text .flag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 6px 0 2px;
+  padding: 5px 10px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: 500;
+  display: block;
+}
+
+.flag-warn {
+  background: rgba(255,107,107,0.08);
+  border-left: 2px solid var(--warn);
+  color: #ff9999;
+  margin: 5px 0;
+  padding: 6px 10px;
+}
+
+.flag-ok {
+  background: rgba(52,211,153,0.08);
+  border-left: 2px solid #34d399;
+  color: #6ee7b7;
+  margin: 5px 0;
+  padding: 6px 10px;
+}
+
+.flag-info {
+  background: rgba(0,212,255,0.06);
+  border-left: 2px solid var(--accent);
+  color: #7ee8fa;
+  margin: 5px 0;
+  padding: 6px 10px;
+}
+
+.msg-attachment {
+  margin-top: 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 8px 14px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--label);
+}
+
+.attachment-icon { font-size: 14px; }
+
+.hitl-prompt {
+  background: rgba(251,146,60,0.06);
+  border: 1px solid rgba(251,146,60,0.2);
+  border-radius: 4px;
+  padding: 14px 16px;
+  margin-top: 8px;
+}
+
+.hitl-label {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: #fb923c;
+  margin-bottom: 10px;
+}
+
+.hitl-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.hitl-btn {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  padding: 6px 14px;
+  border-radius: 2px;
+  border: none;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.hitl-btn:hover { opacity: 0.8; }
+.hitl-btn.revise  { background: rgba(251,191,36,0.15); color: #fbbf24; border: 1px solid rgba(251,191,36,0.3); }
+.hitl-btn.approve { background: rgba(52,211,153,0.12); color: #34d399; border: 1px solid rgba(52,211,153,0.25); }
+.hitl-btn.reject  { background: rgba(255,107,107,0.1); color: var(--warn); border: 1px solid rgba(255,107,107,0.25); }
+
+/* ── DEFICIENCIES PANEL ── */
+.deficiencies-section { border-top: 1px solid var(--border); }
+
+.def-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.def-card {
+  background: var(--surface);
+  padding: 32px 28px;
+  position: relative;
+  transition: background 0.2s;
+}
+
+.def-card:hover { background: var(--surface2); }
+
+.def-num {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-bottom: 16px;
+}
+
+.def-badge {
+  display: inline-block;
+  font-family: var(--mono);
+  font-size: 8px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  padding: 3px 10px;
+  border-radius: 2px;
+  margin-bottom: 16px;
+}
+
+.def-badge.ethics   { background: rgba(167,139,250,0.1); color: #a78bfa; border: 1px solid rgba(167,139,250,0.2); }
+.def-badge.privacy  { background: rgba(52,211,153,0.1); color: #34d399; border: 1px solid rgba(52,211,153,0.2); }
+
+.def-title {
+  font-family: var(--serif);
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 10px;
+  line-height: 1.25;
+}
+
+.def-desc {
+  font-size: 13px;
+  color: var(--label);
+  line-height: 1.7;
+  font-weight: 300;
+  margin-bottom: 18px;
+}
+
+.def-reg {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  color: var(--muted);
+  padding: 6px 10px;
+  background: var(--surface2);
+  border-radius: 3px;
+  border-left: 2px solid var(--warn);
+}
+
+/* ── TECH STACK ── */
+.tech-section { border-top: 1px solid var(--border); }
+
+.tech-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  overflow: hidden;
+}
+
+.tech-card {
+  background: var(--surface);
+  padding: 28px 24px;
+  text-align: center;
+  transition: background 0.2s;
+}
+
+.tech-card:hover { background: var(--surface2); }
+
+.tech-emoji { font-size: 24px; margin-bottom: 12px; }
+
+.tech-name {
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text);
+  letter-spacing: 0.05em;
+  margin-bottom: 4px;
+}
+
+.tech-role {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--muted);
+  letter-spacing: 0.08em;
+  line-height: 1.5;
+}
+
+/* ── CTA FOOTER ── */
+.cta-section {
+  border-top: 1px solid var(--border);
+  text-align: center;
+  background: linear-gradient(0deg, var(--surface) 0%, transparent 100%);
+}
+
+.cta-section h2 { font-size: clamp(36px, 4vw, 56px); margin-bottom: 20px; }
+
+.cta-section p {
+  font-size: 15px;
+  color: var(--muted);
+  max-width: 500px;
+  margin: 0 auto 48px;
+  line-height: 1.7;
+}
+
+.cta-buttons {
+  display: flex;
+  gap: 16px;
+  justify-content: center;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+/* ── FOOTER ── */
+footer {
+  border-top: 1px solid var(--border);
+  padding: 32px 48px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  max-width: 1280px;
+  margin: 0 auto;
+}
+
+.footer-left {
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--muted);
+  line-height: 1.8;
+}
+
+.footer-left a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.footer-right {
+  font-family: var(--mono);
+  font-size: 9px;
+  color: var(--muted);
+  text-align: right;
+  line-height: 1.8;
+}
+
+/* ── ANIMATIONS ── */
+.reveal {
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 0.7s ease, transform 0.7s ease;
+}
+
+.reveal.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ── SCROLLBAR ── */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: var(--bg); }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* ── DIVIDER ── */
+.divider-line {
+  width: 100%;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border2), transparent);
+  margin: 0;
+}
+
+/* ── RESPONSIVE ── */
+@media (max-width: 900px) {
+  nav { padding: 16px 24px; }
+  .nav-links { display: none; }
+  .hero { grid-template-columns: 1fr; padding: 100px 24px 60px; gap: 40px; }
+  .problem-grid { grid-template-columns: 1fr; }
+  .roles-grid { grid-template-columns: 1fr 1fr; }
+  .def-grid { grid-template-columns: 1fr; }
+  .tech-grid { grid-template-columns: repeat(3, 1fr); }
+  .section-inner { padding: 70px 24px; }
+  footer { flex-direction: column; gap: 20px; text-align: center; }
+  .footer-right { text-align: center; }
+}
+
+@media (max-width: 600px) {
+  .roles-grid { grid-template-columns: 1fr; }
+  .tech-grid { grid-template-columns: repeat(2, 1fr); }
+  .stat-row { grid-template-columns: 1fr; }
+}
+</style>
+</head>
+<body>
+
+<div class="grid-lines"></div>
+
+<!-- NAV -->
+<nav>
+  <div class="nav-logo">
+    <div class="nav-mark">
+      <svg viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="1" y="1" width="5" height="5" stroke="#00d4ff" stroke-width="1.2"/>
+        <rect x="8" y="1" width="5" height="5" stroke="#00d4ff" stroke-width="1.2" opacity="0.5"/>
+        <rect x="1" y="8" width="5" height="5" stroke="#00d4ff" stroke-width="1.2" opacity="0.5"/>
+        <rect x="8" y="8" width="5" height="5" stroke="#00d4ff" stroke-width="1.2" opacity="0.8"/>
+      </svg>
+    </div>
+    <span class="nav-name">Ethics<span>Board</span> AI</span>
+  </div>
+  <ul class="nav-links">
+    <li><a href="#problem">Problem</a></li>
+    <li><a href="#roles">Agents</a></li>
+    <li><a href="#workflow">Workflow</a></li>
+    <li><a href="#deficiencies">Demo</a></li>
+    <li><a href="#tech">Stack</a></li>
+  </ul>
+  <div class="nav-badge">Band of Agents Hackathon · Track 3</div>
+</nav>
+
+<!-- HERO -->
+<section class="hero" id="home">
+  <div class="hero-left">
+    <div class="hero-track">Track 3 — Regulated &amp; High-Stakes Workflows</div>
+    <h1>Research ethics,<br/><em>governed</em> by agents.</h1>
+    <p class="hero-desc">
+      EthicsBoard AI deploys four specialist agents through Band to coordinate
+      the full IRB ethics review — protocol analysis, ethics assessment,
+      privacy compliance, and human chair approval. The Band room is the audit record.
+    </p>
+    <div class="hero-stats">
+      <div class="stat">
+        <div class="stat-num">6–12</div>
+        <div class="stat-label">Weeks today<br/>per review</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num">4</div>
+        <div class="stat-label">Specialist<br/>agents</div>
+      </div>
+      <div class="stat">
+        <div class="stat-num">3</div>
+        <div class="stat-label">Frameworks<br/>in one room</div>
+      </div>
+    </div>
+    <div class="hero-cta">
+      <a href="http://localhost:3000" class="btn-primary" target="_blank">
+        Launch Live Dashboard →
+      </a>
+      <a href="#workflow" class="btn-ghost">See it work</a>
+      <a href="https://github.com/Malikasadjaved/ethicsboard-ai" class="btn-ghost" target="_blank">
+        GitHub →
+      </a>
+    </div>
+  </div>
+
+  <div class="hero-right">
+    <div class="protocol-card">
+      <div class="protocol-header">
+        <div class="ph-dots">
+          <div class="ph-dot"></div>
+          <div class="ph-dot"></div>
+          <div class="ph-dot"></div>
+        </div>
+        <div class="ph-title">IRB_Protocol_PEDI-2026-0047.pdf</div>
+        <div class="ph-status">⚠ Under Review</div>
+      </div>
+      <div class="protocol-body">
+        <div class="proto-field">
+          <div class="proto-key">Protocol No.</div>
+          <div class="proto-val accent">IRB-PEDI-2026-0047</div>
+        </div>
+        <div class="proto-field">
+          <div class="proto-key">Study Title</div>
+          <div class="proto-val">Phase II RCT — MetaGlyX-400<br/>in Paediatric T2DM</div>
+        </div>
+        <div class="proto-field">
+          <div class="proto-key">Population</div>
+          <div class="proto-val warn">VULNERABLE — Minors (8–16 yrs)</div>
+        </div>
+        <div class="proto-field">
+          <div class="proto-key">Risk Level</div>
+          <div class="proto-val">
+            <span class="tag tag-red">Greater Than Minimal</span>
+          </div>
+        </div>
+        <div class="proto-field">
+          <div class="proto-key">Review Type</div>
+          <div class="proto-val">Full Board Required</div>
+        </div>
+        <div class="proto-field">
+          <div class="proto-key">Sponsor</div>
+          <div class="proto-val">NovaMed Pharmaceuticals Ltd.</div>
+        </div>
+        <div class="proto-field">
+          <div class="proto-key">Status</div>
+          <div class="proto-val">
+            <span class="tag tag-blue">Parsing</span>
+            <span class="tag tag-red">2 Ethics Deficiencies</span>
+            <span class="tag tag-red">1 Privacy Gap</span>
+          </div>
+        </div>
+
+        <div class="deficiency-box">
+          <div class="deficiency-title">⚠ Deficiencies Detected</div>
+          <div class="deficiency-item">Written assent absent for participants aged 12–16 (45 CFR 46.408)</div>
+          <div class="deficiency-item">Hepatic monitoring not disclosed in consent documents</div>
+          <div class="deficiency-item">BAA missing for CRO data sharing (HIPAA 45 CFR 164.308)</div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider-line"></div>
+
+<!-- PROBLEM -->
+<section class="problem-section" id="problem">
+  <div class="section-inner">
+    <div class="section-label">The Problem</div>
+    <div class="problem-grid">
+      <div>
+        <h2>Ethics review<br/>is a <em>coordination</em><br/>failure.</h2>
+      </div>
+      <div class="problem-text">
+        <p>
+          Every hospital, university, and pharmaceutical company must submit
+          research involving human subjects to an <strong>Institutional Review Board (IRB)</strong>
+          before any study can begin. The board reviews ethics, consent, risk,
+          and data privacy — then a qualified human chair must sign off.
+        </p>
+        <p>
+          Today this process runs on <strong>email chains</strong>. A policy reviewer
+          finishes their work and sends it to the legal team, who send it to
+          risk, who send it to the chair — with no structured handoff, no
+          traceability, and no coordination layer. A single missing clause
+          in a consent form restarts the clock.
+        </p>
+        <p>
+          <strong>Patient studies get delayed. Cures get delayed.</strong>
+          And there is no audit trail that regulators can rely on.
+        </p>
+        <div class="stat-row">
+          <div class="stat-cell">
+            <div class="stat-cell-num">6–12</div>
+            <div class="stat-cell-label">Weeks average<br/>IRB review cycle</div>
+          </div>
+          <div class="stat-cell">
+            <div class="stat-cell-num">$4.2B</div>
+            <div class="stat-cell-label">IRB services<br/>market, manual</div>
+          </div>
+          <div class="stat-cell">
+            <div class="stat-cell-num">0</div>
+            <div class="stat-cell-label">AI systems<br/>addressing this</div>
+          </div>
+          <div class="stat-cell">
+            <div class="stat-cell-num">24h</div>
+            <div class="stat-cell-label">SAE reporting<br/>legal deadline</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider-line"></div>
+
+<!-- ROLES -->
+<section class="roles-section" id="roles">
+  <div class="section-inner">
+    <div class="section-label">The Agents</div>
+    <h2>Four specialists.<br/><em>One</em> Band room.</h2>
+    <p class="section-sub">
+      Each agent is a domain expert running on a different model and framework.
+      They communicate only through Band — no direct API calls between agents.
+      Remove Band and the workflow collapses.
+    </p>
+
+    <div class="roles-grid">
+      <div class="role-card card-1 reveal">
+        <div class="role-number">Agent 01</div>
+        <div class="role-icon ic-1">📋</div>
+        <div class="role-name">Protocol<br/>Analyst</div>
+        <div class="role-model">Google ADK + Gemini 2.5 Pro</div>
+        <div class="role-desc">
+          Receives the research protocol PDF, extracts structured clinical fields,
+          classifies the study risk level, and opens the Band review room.
+        </div>
+        <ul class="role-responsibilities">
+          <li>PDF parsing and field extraction</li>
+          <li>Risk classification (Minimal / &gt;Minimal)</li>
+          <li>Population and intervention analysis</li>
+          <li>Review type determination</li>
+        </ul>
+        <div class="role-band-badge">Posts to Band Room</div>
+      </div>
+
+      <div class="role-card card-2 reveal">
+        <div class="role-number">Agent 02</div>
+        <div class="role-icon ic-2">⚖️</div>
+        <div class="role-name">Ethics<br/>Specialist</div>
+        <div class="role-model">Featherless AI — Open-Source</div>
+        <div class="role-desc">
+          Reviews the protocol against Belmont Report principles and 45 CFR 46.
+          Checks informed consent validity, assent requirements, and risk-benefit ratio.
+        </div>
+        <ul class="role-responsibilities">
+          <li>Informed consent adequacy review</li>
+          <li>Pediatric assent requirements</li>
+          <li>Belmont principles assessment</li>
+          <li>Vulnerable population protections</li>
+        </ul>
+        <div class="role-band-badge">Reads from Band Room</div>
+      </div>
+
+      <div class="role-card card-3 reveal">
+        <div class="role-number">Agent 03</div>
+        <div class="role-icon ic-3">🔒</div>
+        <div class="role-name">Privacy<br/>Reviewer</div>
+        <div class="role-model">AI/ML API — Multi-Model</div>
+        <div class="role-desc">
+          Checks data governance against HIPAA, BAA requirements, de-identification
+          standards, third-party data sharing, and retention policy compliance.
+        </div>
+        <ul class="role-responsibilities">
+          <li>HIPAA Safe Harbour validation</li>
+          <li>Business Associate Agreement check</li>
+          <li>CRO data sharing compliance</li>
+          <li>Data retention policy review</li>
+        </ul>
+        <div class="role-band-badge">Reads from Band Room</div>
+      </div>
+
+      <div class="role-card card-4 reveal">
+        <div class="role-number">Agent 04</div>
+        <div class="role-icon ic-4">👤</div>
+        <div class="role-name">Committee<br/>Coordinator</div>
+        <div class="role-model">FastAPI + Band HITL</div>
+        <div class="role-desc">
+          Aggregates findings from all agents. Architecturally blocked from issuing
+          any decision without human IRB chair approval. Generates the determination letter.
+        </div>
+        <ul class="role-responsibilities">
+          <li>Findings aggregation from Band</li>
+          <li>IRB chair HITL enforcement</li>
+          <li>Determination letter generation</li>
+          <li>Regulatory audit trail assembly</li>
+        </ul>
+        <div class="role-band-badge">Enforces HITL</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider-line"></div>
+
+<!-- WORKFLOW -->
+<section class="workflow-section" id="workflow">
+  <div class="section-inner">
+    <div class="section-label">How It Works</div>
+    <h2>The Band room<br/>is the <em>legal record.</em></h2>
+    <p class="section-sub">
+      Every agent communicates through Band's @mention routing. Every finding,
+      every handoff, every human decision is timestamped and preserved.
+      This is what regulators require.
+    </p>
+
+    <div class="band-room">
+      <div class="band-room-header">
+        <div class="band-room-title">
+          <div class="band-dot"></div>
+          <div>
+            <div class="band-room-name"># IRB Review — Protocol IRB-PEDI-2026-0047</div>
+            <div class="band-room-sub">Band · 5 participants · Full Board Review</div>
+          </div>
+        </div>
+        <div class="band-participants">
+          <div class="band-avatar active" title="ProtocolAgent">📋</div>
+          <div class="band-avatar active" title="EthicsAgent">⚖️</div>
+          <div class="band-avatar active" title="PrivacyAgent">🔒</div>
+          <div class="band-avatar active" title="CommitteeAgent">👤</div>
+          <div class="band-avatar" title="IRB Chair">🧑‍⚕️</div>
+        </div>
+      </div>
+
+      <div class="band-messages">
+
+        <!-- Message 1 -->
+        <div class="msg">
+          <div class="msg-avatar av-researcher">🧑‍🔬</div>
+          <div class="msg-body">
+            <div class="msg-meta">
+              <span class="msg-sender s-researcher">Dr. Mahmood (Researcher)</span>
+              <span class="msg-time">09:14 AM</span>
+            </div>
+            <div class="msg-text">
+              <span class="mention">@ProtocolAgent</span> Please review the attached research protocol for IRB submission.
+              <div class="msg-attachment">
+                <span class="attachment-icon">📄</span>
+                IRB_Protocol_PEDI-2026-0047.pdf &nbsp;·&nbsp; 3 pages &nbsp;·&nbsp; 284 KB
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Message 2 -->
+        <div class="msg">
+          <div class="msg-avatar av-protocol">📋</div>
+          <div class="msg-body">
+            <div class="msg-meta">
+              <span class="msg-sender s-protocol">@ProtocolAgent</span>
+              <span class="msg-time">09:14 AM</span>
+            </div>
+            <div class="msg-text">
+              Protocol parsed. Structured extraction complete.
+              <div class="flag flag-info">Study: Phase II RCT — MetaGlyX-400 in Paediatric T2DM (Ages 8–16)</div>
+              <div class="flag flag-warn">Population: VULNERABLE (minors) — Full Board review required</div>
+              <div class="flag flag-warn">Risk Classification: GREATER THAN MINIMAL RISK per 45 CFR 46.405</div>
+              <br/>
+              <span class="mention m-ethics">@EthicsAgent</span> — please assess informed consent adequacy and risk-benefit ratio for this protocol.
+            </div>
+          </div>
+        </div>
+
+        <!-- Message 3 -->
+        <div class="msg">
+          <div class="msg-avatar av-ethics">⚖️</div>
+          <div class="msg-body">
+            <div class="msg-meta">
+              <span class="msg-sender s-ethics">@EthicsAgent</span>
+              <span class="msg-time">09:15 AM</span>
+            </div>
+            <div class="msg-text">
+              Ethics review complete. Belmont principles assessed.
+              <div class="flag flag-warn">DEFICIENCY 1 — Written assent absent for participants aged 12–16.<br/>45 CFR 46.408 requires written assent for minors capable of providing it. Protocol only describes verbal explanation for ages 8–11; no assent procedure documented for older participants.</div>
+              <div class="flag flag-warn">DEFICIENCY 2 — Long-term hepatic monitoring requirement disclosed in risk table (Section 4) but absent from consent documents. ICH E6(R2) 4.8.10 requires all material risks to be included in informed consent.</div>
+              <div class="flag flag-ok">Benefit assessment: Acceptable. Potential clinical benefit justifies risks given inadequate current treatment options.</div>
+              <br/>
+              <span class="mention m-privacy">@PrivacyAgent</span> — please review data handling and HIPAA compliance.
+            </div>
+          </div>
+        </div>
+
+        <!-- Message 4 -->
+        <div class="msg">
+          <div class="msg-avatar av-privacy">🔒</div>
+          <div class="msg-body">
+            <div class="msg-meta">
+              <span class="msg-sender s-privacy">@PrivacyAgent</span>
+              <span class="msg-time">09:15 AM</span>
+            </div>
+            <div class="msg-text">
+              Privacy and data governance review complete.
+              <div class="flag flag-ok">De-identification: HIPAA Safe Harbour standard met (45 CFR 164.514(b)). Coded participant ID system validated.</div>
+              <div class="flag flag-warn">DEFICIENCY 3 — CRO data sharing (BioSync Research Pvt Ltd) covered by "confidentiality agreement" only. HIPAA 45 CFR 164.308(b)(1) mandates a Business Associate Agreement before any PHI transfer. No BAA referenced or appended to this submission.</div>
+              <div class="flag flag-ok">Data retention policy: Compliant with 15-year post-trial storage requirement.</div>
+              <br/>
+              <span class="mention m-committee">@CommitteeAgent</span> — 2 ethics deficiencies, 1 privacy gap. Full Board review required. Human chair approval needed before researcher notification.
+            </div>
+          </div>
+        </div>
+
+        <!-- Message 5 -->
+        <div class="msg">
+          <div class="msg-avatar av-committee">👤</div>
+          <div class="msg-body">
+            <div class="msg-meta">
+              <span class="msg-sender s-committee">@CommitteeAgent</span>
+              <span class="msg-time">09:16 AM</span>
+            </div>
+            <div class="msg-text">
+              All agent findings aggregated. Determination cannot be issued without IRB Chair approval — this is a legal requirement.
+              <br/><br/>
+              Adding IRB Chair to this room via Band participant service…
+            </div>
+          </div>
+        </div>
+
+        <!-- Message 6 — HITL -->
+        <div class="msg">
+          <div class="msg-avatar av-committee">👤</div>
+          <div class="msg-body">
+            <div class="msg-meta">
+              <span class="msg-sender s-committee">@CommitteeAgent</span>
+              <span class="msg-time">09:16 AM</span>
+            </div>
+            <div class="msg-text">
+              <span class="mention m-chair">@Dr.IRBChair</span> — you have been added to this review room.
+
+              <div class="hitl-prompt">
+                <div class="hitl-label">⬡ Band · Human Decision Required</div>
+                <div style="font-size:10.5px; color: var(--label); line-height: 1.65;">
+                  <strong style="color:var(--text);">Protocol IRB-PEDI-2026-0047</strong> requires Full Board determination.<br/>
+                  <br/>
+                  Findings: <span style="color:var(--warn);">3 deficiencies</span> (2 ethics, 1 privacy)<br/>
+                  Agents: ProtocolAgent · EthicsAgent · PrivacyAgent · CommitteeAgent<br/>
+                  Review record: this Band room (complete audit trail above)
+                </div>
+                <div class="hitl-actions">
+                  <button class="hitl-btn revise" onclick="handleDecision('revise', this)">Request Revisions</button>
+                  <button class="hitl-btn approve" onclick="handleDecision('approve', this)">Approve</button>
+                  <button class="hitl-btn reject" onclick="handleDecision('reject', this)">Reject</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Message 7 — Chair response (hidden, appears on click) -->
+        <div class="msg" id="chair-response" style="display:none;">
+          <div class="msg-avatar av-chair">🧑‍⚕️</div>
+          <div class="msg-body">
+            <div class="msg-meta">
+              <span class="msg-sender s-chair">Dr. IRBChair</span>
+              <span class="msg-time" id="chair-time"></span>
+            </div>
+            <div class="msg-text" id="chair-text"></div>
+          </div>
+        </div>
+
+        <!-- Message 8 — Final (hidden) -->
+        <div class="msg" id="final-response" style="display:none;">
+          <div class="msg-avatar av-committee">👤</div>
+          <div class="msg-body">
+            <div class="msg-meta">
+              <span class="msg-sender s-committee">@CommitteeAgent</span>
+              <span class="msg-time" id="final-time"></span>
+            </div>
+            <div class="msg-text" id="final-text"></div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider-line"></div>
+
+<!-- DEFICIENCIES -->
+<section class="deficiencies-section" id="deficiencies">
+  <div class="section-inner">
+    <div class="section-label">The Demo</div>
+    <h2>Three deficiencies.<br/><em>Planted</em> deliberately.</h2>
+    <p class="section-sub">
+      The demo protocol contains real IRB deficiency categories. If you show this
+      document to an actual IRB professional, they will recognize the issues immediately.
+    </p>
+
+    <div class="def-grid">
+      <div class="def-card reveal">
+        <div class="def-num">Deficiency 01</div>
+        <div class="def-badge ethics">Ethics Agent</div>
+        <div class="def-title">Missing Written Assent for Ages 12–16</div>
+        <div class="def-desc">
+          The protocol describes verbal explanation only for ages 8–11 and makes
+          no provision for written assent from older participants. Minors capable
+          of assent are legally required to provide it in writing.
+        </div>
+        <div class="def-reg">45 CFR 46.408 — Common Rule</div>
+      </div>
+
+      <div class="def-card reveal">
+        <div class="def-num">Deficiency 02</div>
+        <div class="def-badge ethics">Ethics Agent</div>
+        <div class="def-title">Hepatic Monitoring Not Disclosed in Consent</div>
+        <div class="def-desc">
+          The risk assessment table (Section 4) mentions long-term hepatic monitoring
+          as a safety requirement. The informed consent documents make no mention of
+          this, creating a material disclosure gap.
+        </div>
+        <div class="def-reg">ICH E6(R2) 4.8.10 — Good Clinical Practice</div>
+      </div>
+
+      <div class="def-card reveal">
+        <div class="def-num">Deficiency 03</div>
+        <div class="def-badge privacy">Privacy Agent</div>
+        <div class="def-title">No Business Associate Agreement for CRO</div>
+        <div class="def-desc">
+          Data sharing with BioSync Research (the appointed CRO) is governed
+          by a "confidentiality agreement." Any entity receiving protected health
+          information must have an executed Business Associate Agreement — not a
+          standard NDA.
+        </div>
+        <div class="def-reg">HIPAA 45 CFR 164.308(b)(1)</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider-line"></div>
+
+<!-- TECH -->
+<section class="tech-section" id="tech">
+  <div class="section-inner">
+    <div class="section-label">Technology Stack</div>
+    <h2>Every agent runs on a<br/><em>different</em> framework.</h2>
+    <p class="section-sub">
+      Cross-framework coordination is Band's headline capability.
+      EthicsBoard AI demonstrates it explicitly — four stacks, one shared room.
+    </p>
+
+    <div class="tech-grid">
+      <div class="tech-card reveal">
+        <div class="tech-emoji">⬡</div>
+        <div class="tech-name">Band SDK</div>
+        <div class="tech-role">@mention routing<br/>HITL enforcement<br/>Audit trail</div>
+      </div>
+      <div class="tech-card reveal">
+        <div class="tech-emoji">🤖</div>
+        <div class="tech-name">Google ADK</div>
+        <div class="tech-role">ProtocolAgent<br/>orchestration<br/>framework</div>
+      </div>
+      <div class="tech-card reveal">
+        <div class="tech-emoji">✨</div>
+        <div class="tech-name">Gemini 2.5 Pro</div>
+        <div class="tech-role">PDF parsing<br/>Risk classification<br/>Extraction</div>
+      </div>
+      <div class="tech-card reveal">
+        <div class="tech-emoji">🪶</div>
+        <div class="tech-name">Featherless AI</div>
+        <div class="tech-role">EthicsAgent<br/>Open-source<br/>reasoning</div>
+      </div>
+      <div class="tech-card reveal">
+        <div class="tech-emoji">🧠</div>
+        <div class="tech-name">AI/ML API</div>
+        <div class="tech-role">PrivacyAgent<br/>Multi-model<br/>inference</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider-line"></div>
+
+<!-- CTA -->
+<section class="cta-section" id="cta">
+  <div class="section-inner">
+    <div class="section-label" style="justify-content: center;">Built for the Hackathon</div>
+    <h2>The Band room<br/>is the <em>product.</em></h2>
+    <p>
+      EthicsBoard AI was built for the Band of Agents Hackathon, June 2026.
+      The protocol PDF, agent code, and full submission package are open source.
+    </p>
+    <div class="cta-buttons">
+      <a href="https://github.com/Malikasadjaved/ethicsboard-ai" class="btn-primary" target="_blank">View on GitHub</a>
+      <a href="#workflow" class="btn-ghost">Watch the demo →</a>
+    </div>
+  </div>
+</section>
+
+<!-- FOOTER -->
+<footer>
+  <div class="footer-left">
+    EthicsBoard AI · Band of Agents Hackathon · Track 3<br/>
+    Built by <a href="https://linkedin.com/in/malikasadjaved" target="_blank">Asad Javed</a> · Premium Logic<br/>
+    <a href="mailto:malik.asad1x@gmail.com">malik.asad1x@gmail.com</a>
+  </div>
+  <div class="footer-right">
+    Band of Agents Hackathon<br/>
+    June 12–19, 2026 · Online<br/>
+    $10,000+ Prize Pool
+  </div>
+</footer>
+
+<script>
+// ── Reveal on scroll ──────────────────────────────────────────
+const reveals = document.querySelectorAll('.reveal');
+const observer = new IntersectionObserver((entries) => {
+  entries.forEach((entry, i) => {
+    if (entry.isIntersecting) {
+      setTimeout(() => entry.target.classList.add('visible'), i * 80);
+      observer.unobserve(entry.target);
+    }
+  });
+}, { threshold: 0.1 });
+reveals.forEach(el => observer.observe(el));
+
+// ── HITL interaction ──────────────────────────────────────────
+function handleDecision(type, btn) {
+  // Disable all buttons
+  document.querySelectorAll('.hitl-btn').forEach(b => {
+    b.disabled = true;
+    b.style.opacity = '0.4';
+    b.style.cursor = 'default';
+  });
+
+  btn.style.opacity = '1';
+  btn.style.outline = '2px solid currentColor';
+
+  const now = new Date();
+  const timeStr = now.toLocaleTimeString('en-US', {
+    hour: '2-digit', minute: '2-digit', hour12: true
+  });
+
+  const chairEl  = document.getElementById('chair-response');
+  const chairTxt = document.getElementById('chair-text');
+  const chairTime= document.getElementById('chair-time');
+  const finalEl  = document.getElementById('final-response');
+  const finalTxt = document.getElementById('final-text');
+  const finalTime= document.getElementById('final-time');
+
+  if (type === 'revise') {
+    chairTxt.innerHTML = `Request Revisions. Researcher must address:<br/>
+      <div class="flag flag-warn" style="margin-top:8px;">
+        1. Submit written assent form for participants aged 12–16<br/>
+        2. Add hepatic monitoring disclosure to informed consent<br/>
+        3. Execute and append BAA with BioSync Research Pvt Ltd
+      </div>`;
+    finalTxt.innerHTML = `Decision recorded and timestamped. Generating IRB Determination Letter — Protocol IRB-PEDI-2026-0047.<br/><br/>
+      <div class="flag flag-info">OUTCOME: Revisions Required · 3 items<br/>Resubmission window: 30 days<br/>Complete review record preserved in this Band room.</div>`;
+  } else if (type === 'approve') {
+    chairTxt.innerHTML = `Approved. Protocol may proceed to enrolment following standard monitoring plan.`;
+    finalTxt.innerHTML = `Approval recorded and timestamped. Generating IRB Approval Letter.<br/><br/>
+      <div class="flag flag-ok">OUTCOME: Approved<br/>Approval valid for 12 months. Annual review required.<br/>Full audit trail preserved in this Band room.</div>`;
+  } else {
+    chairTxt.innerHTML = `Rejected. Protocol presents unacceptable risk to a vulnerable paediatric population without adequate safeguards.`;
+    finalTxt.innerHTML = `Rejection recorded and timestamped. Generating IRB Rejection Letter.<br/><br/>
+      <div class="flag flag-warn">OUTCOME: Rejected<br/>Researcher may appeal within 30 days per institutional policy.<br/>Complete record preserved in this Band room.</div>`;
+  }
+
+  chairTime.textContent = timeStr;
+  finalTime.textContent = timeStr;
+
+  // Animate in with delay
+  setTimeout(() => {
+    chairEl.style.display = 'flex';
+    chairEl.style.animationDelay = '0s';
+    chairEl.style.opacity = '0';
+    chairEl.style.transform = 'translateY(8px)';
+    requestAnimationFrame(() => {
+      chairEl.style.transition = 'opacity 0.4s ease, transform 0.4s ease';
+      chairEl.style.opacity = '1';
+      chairEl.style.transform = 'translateY(0)';
+    });
+  }, 200);
+
+  setTimeout(() => {
+    finalEl.style.display = 'flex';
+    finalEl.style.opacity = '0';
+    finalEl.style.transform = 'translateY(8px)';
+    requestAnimationFrame(() => {
+      finalEl.style.transition = 'opacity 0.4s ease, transform 0.4s ease';
+      finalEl.style.opacity = '1';
+      finalEl.style.transform = 'translateY(0)';
+    });
+    // Scroll to bottom
+    const msgs = document.querySelector('.band-messages');
+    msgs.scrollTop = msgs.scrollHeight;
+  }, 900);
+}
+
+// ── Smooth anchor scroll ──────────────────────────────────────
+document.querySelectorAll('a[href^="#"]').forEach(a => {
+  a.addEventListener('click', e => {
+    const target = document.querySelector(a.getAttribute('href'));
+    if (target) {
+      e.preventDefault();
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  });
+});
+</script>
+</body>
+</html>

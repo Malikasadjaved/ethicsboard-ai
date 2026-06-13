@@ -1,0 +1,36 @@
+# Environment & Secrets
+.env
+agent_config.yaml
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+dist/
+build/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Uploaded files
+uploads/
+
+# Temp files
+temp_*.pdf
+results.txt

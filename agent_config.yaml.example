@@ -1,0 +1,19 @@
+# EthicsBoard AI — Band Agent Configuration
+# Fill in after registering agents at https://app.band.ai/agents
+# NEVER commit this file to git! (added to .gitignore)
+
+protocol_agent:
+  agent_id: "<your-protocol-agent-uuid>"
+  api_key: "<your-protocol-agent-api-key>"
+
+ethics_agent:
+  agent_id: "<your-ethics-agent-uuid>"
+  api_key: "<your-ethics-agent-api-key>"
+
+privacy_agent:
+  agent_id: "<your-privacy-agent-uuid>"
+  api_key: "<your-privacy-agent-api-key>"
+
+committee_agent:
+  agent_id: "<your-committee-agent-uuid>"
+  api_key: "<your-committee-agent-api-key>"
