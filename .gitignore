@@ -2,6 +2,9 @@
 .env
 agent_config.yaml
 
+#Claude files
+CLAUDE.md
+
 # Python
 __pycache__/
 *.pyc
