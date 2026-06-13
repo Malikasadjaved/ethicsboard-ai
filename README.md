@@ -4,6 +4,7 @@
 **Built for the Band of Agents Hackathon (Track 3: Regulated & High-Stakes Workflows)**
 
 <p>
+  <a href="https://github.com/Malikasadjaved/ethicsboard-ai/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Malikasadjaved/ethicsboard-ai/actions/workflows/ci.yml/badge.svg"></a>
   <img alt="Status" src="https://img.shields.io/badge/status-hackathon%20demo-6366f1">
   <img alt="Python" src="https://img.shields.io/badge/python-3.11+-3776AB?logo=python&logoColor=white">
   <img alt="FastAPI" src="https://img.shields.io/badge/FastAPI-backend-009688?logo=fastapi&logoColor=white">
@@ -14,6 +15,23 @@
 </p>
 
 EthicsBoard AI is an automated Institutional Review Board (IRB) review pipeline powered by cooperative agents. It accelerates human clinical trial protocols from weeks to minutes while enforcing strict compliance and regulatory audit trails.
+
+<p align="center">
+  <img src="docs/architecture.svg" alt="EthicsBoard AI architecture — Researcher → ProtocolAgent → parallel Ethics ∥ Privacy → CommitteeAgent → human IRB Chair, all over Band @mention routing" width="100%">
+</p>
+
+---
+
+## 📸 Screenshots
+
+<!--
+  Live dashboard captures live in docs/. Drop the PNGs in and they'll render here:
+  docs/dashboard.png      — full pipeline view (agent cards + deficiencies)
+  docs/review-feed.png    — Band Room live review feed
+-->
+> The live Next.js dashboard streams the Band room in real time — agent status cards,
+> the non-linear pipeline tracker, the live message feed, and the detected-deficiency
+> panel with regulatory citations. _(Add `docs/dashboard.png` and `docs/review-feed.png` to embed captures here.)_
 
 ---
 
@@ -225,6 +243,15 @@ ethicsboard-ai/
 ---
 
 ## 🏃 Quick Start
+
+### Fastest path — Docker Compose
+Once your `.env` and `agent_config.yaml` are in place (see step 1 below), the whole
+stack comes up with one command:
+```bash
+docker-compose up --build
+```
+Backend on `:8008`, frontend on `:3000`. To run the services manually instead, follow
+the steps below.
 
 ### 1. Configure Environment Variables
 Copy `.env.example` to `.env` and fill in the values:
