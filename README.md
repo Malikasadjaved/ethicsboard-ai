@@ -10,6 +10,7 @@
   <img alt="Next.js" src="https://img.shields.io/badge/Next.js-16-000000?logo=nextdotjs&logoColor=white">
   <img alt="Docker" src="https://img.shields.io/badge/Docker-compose-2496ED?logo=docker&logoColor=white">
   <img alt="Multi-agent" src="https://img.shields.io/badge/agents-4%20specialists-a855f7">
+  <img alt="License" src="https://img.shields.io/badge/license-MIT-22c55e">
 </p>
 
 EthicsBoard AI is an automated Institutional Review Board (IRB) review pipeline powered by cooperative agents. It accelerates human clinical trial protocols from weeks to minutes while enforcing strict compliance and regulatory audit trails.
