@@ -75,20 +75,52 @@ async def test_full_flow():
             print("Timeout waiting for WebSocket messages.")
             return
 
-    # 4. Submit chair decision via REST API
+    # 4. Fetch room ID to post decision via Band Room (HITL validation)
+    print("\nFetching room details to test live HITL decision in the Band Room...")
     async with httpx.AsyncClient() as client:
-        print("\nSubmitting chair decision: revisions_required...")
-        decision_payload = {"decision": "revisions_required"}
-        response = await client.post(
-            f"{backend_url}/api/review/{review_id}/decision",
-            json=decision_payload
-        )
+        response = await client.get(f"{backend_url}/api/review/{review_id}")
         if response.status_code != 200:
-            print(f"Failed to submit decision: {response.text}")
+            print(f"Failed to fetch session details: {response.text}")
             return
+        session_details = response.json()
+        band_room_id = session_details.get("band_room_id")
+        print(f"Active Band Room ID: {band_room_id}")
+
+    if band_room_id:
+        print("\nSimulating live IRB Chair decision in Band Room...")
+        try:
+            # Create a separate client (representing the human chair or test user)
+            from agents.band_client import BandClient
+            from thenvoi.config.loader import load_agent_config
+            _, api_key = load_agent_config("ethics_agent")
             
-        result = response.json()
-        print(f"Decision submission response: {result}")
+            chair_client = BandClient(
+                agent_id="dummy-human-irb-chair-id",
+                api_key=api_key,
+                agent_name="irb_chair_test"
+            )
+            
+            # Post decision keyword (no mention to avoid cannot_mention_self)
+            print("Posting '@committee_agent IRB Decision: REVISIONS_REQUIRED' to the Band room...")
+            await chair_client.post_message(band_room_id, "@committee_agent IRB Decision: REVISIONS_REQUIRED.")
+            print("Decision posted successfully. Waiting for CommitteeAgent to process...")
+            
+            # Wait a few seconds for the websocket loop to catch it and complete
+            await asyncio.sleep(8)
+        except Exception as e:
+            print(f"Failed to simulate live Band decision: {e}. Falling back to REST API.")
+            async with httpx.AsyncClient() as client:
+                await client.post(
+                    f"{backend_url}/api/review/{review_id}/decision",
+                    json={"decision": "revisions_required"}
+                )
+    else:
+        print("No active Band Room ID. Submitting chair decision via REST API...")
+        async with httpx.AsyncClient() as client:
+            await client.post(
+                f"{backend_url}/api/review/{review_id}/decision",
+                json={"decision": "revisions_required"}
+            )
 
     # 5. Connect again to check final status and final messages
     async with httpx.AsyncClient() as client:

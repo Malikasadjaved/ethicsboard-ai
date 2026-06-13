@@ -40,15 +40,22 @@ class BandClientAdapter(SimpleAdapter[list]):
     ) -> None:
         # Convert platform message to matching dictionary format
         created_at = getattr(msg, "created_at", None)
+        sender_val = msg.sender_name or msg.sender_id
+        print(f"[Band Client Adapter] {self.client.agent_name} received message in room {room_id} from '{sender_val}': '{msg.content[:60]}'")
         mapped_msg = {
             "id": msg.id,
             "room_id": room_id,
-            "sender": msg.sender_name or msg.sender_id,
+            "sender": sender_val,
             "text": msg.content,
             "timestamp": created_at.isoformat() if created_at and hasattr(created_at, "isoformat") else (
                 created_at if isinstance(created_at, str) else datetime.now(timezone.utc).isoformat()
             ),
         }
+        # Put into subscription queues if any
+        if hasattr(self.client, "subscriptions") and room_id in self.client.subscriptions:
+            for q in self.client.subscriptions[room_id]:
+                await q.put(mapped_msg)
+                
         for handler in self.client.message_handlers:
             try:
                 if asyncio.iscoroutinefunction(handler):
@@ -73,6 +80,7 @@ class BandClient:
         self._running = False
         self.agent = None
         self.adapter = None
+        self.subscriptions: Dict[str, List[asyncio.Queue]] = {}
         
         # Initialize AsyncRestClient
         rest_url = os.getenv("THENVOI_REST_URL", "https://app.band.ai").rstrip('/')
@@ -80,6 +88,41 @@ class BandClient:
             api_key=self.api_key,
             base_url=rest_url,
         )
+        
+    def subscribe(self, room_id: str):
+        """Subscribe to incoming room messages as an async stream."""
+        from contextlib import asynccontextmanager
+        
+        @asynccontextmanager
+        async def _subscribe():
+            queue = asyncio.Queue()
+            if room_id not in self.subscriptions:
+                self.subscriptions[room_id] = []
+            self.subscriptions[room_id].append(queue)
+            
+            class Stream:
+                def __init__(self, q: asyncio.Queue):
+                    self.q = q
+                def __aiter__(self):
+                    return self
+                async def __anext__(self):
+                    msg = await self.q.get()
+                    class PlatformMessageWrapper:
+                        def __init__(self, m):
+                            self.sender_id = m.get("sender", "")
+                            self.content = m.get("text", "")
+                            self.timestamp = m.get("timestamp", "")
+                    return PlatformMessageWrapper(msg)
+                    
+            try:
+                yield Stream(queue)
+            finally:
+                if room_id in self.subscriptions:
+                    self.subscriptions[room_id].remove(queue)
+                    if not self.subscriptions[room_id]:
+                        del self.subscriptions[room_id]
+                        
+        return _subscribe()
     
     async def create_room(self, room_name: str) -> str:
         """Create a new Band room."""

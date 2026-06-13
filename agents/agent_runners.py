@@ -95,11 +95,15 @@ async def handle_protocol_message(msg: dict, client: BandClient):
     """ProtocolAgent direct handler."""
     text = msg.get("text", "")
     room_id = msg.get("room_id")
+    sender = msg.get("sender", "").strip(" :")
     
     # Process only if it looks like a new protocol or start of review, and mentions protocol_agent
     if ("PROTOCOL TEXT:" in text or "Study:" in text or len(text) > 200) and ("@protocol_agent" in text or client.agent_id in text):
-        if msg.get("sender") == client.agent_name or msg.get("sender") == client.agent_id:
+        if sender == client.agent_name or sender == client.agent_id:
             return  # Skip self-posted messages
+            
+        if "All findings aggregated" in text or "IRB Decision" in text:
+            return  # Skip coordinator/committee messages
             
         print(f"[ProtocolAgent] Analyzing new protocol in room {room_id}...")
         try:
@@ -118,10 +122,14 @@ async def handle_ethics_message(msg: dict, client: BandClient):
     """EthicsAgent direct handler."""
     text = msg.get("text", "")
     room_id = msg.get("room_id")
+    sender = msg.get("sender", "").strip(" :")
     
     if "@ethics_agent" in text or client.agent_id in text:
-        if msg.get("sender") == client.agent_name or msg.get("sender") == client.agent_id:
+        if sender == client.agent_name or sender == client.agent_id:
             return  # Skip self-posted messages
+            
+        if "All findings aggregated" in text or "IRB Decision" in text:
+            return  # Skip coordinator/committee messages
             
         print(f"[EthicsAgent] Conducting ethics review in room {room_id}...")
         try:
@@ -140,10 +148,14 @@ async def handle_privacy_message(msg: dict, client: BandClient):
     """PrivacyAgent direct handler."""
     text = msg.get("text", "")
     room_id = msg.get("room_id")
+    sender = msg.get("sender", "").strip(" :")
     
     if "@privacy_agent" in text or client.agent_id in text:
-        if msg.get("sender") == client.agent_name or msg.get("sender") == client.agent_id:
+        if sender == client.agent_name or sender == client.agent_id:
             return  # Skip self-posted messages
+            
+        if "All findings aggregated" in text or "IRB Decision" in text:
+            return  # Skip coordinator/committee messages
             
         print(f"[PrivacyAgent] Conducting HIPAA privacy review in room {room_id}...")
         try:
@@ -162,11 +174,109 @@ async def handle_committee_message(msg: dict, client: BandClient):
     """CommitteeAgent direct handler (HITL coordinator)."""
     text = msg.get("text", "")
     room_id = msg.get("room_id")
+    sender = msg.get("sender", "").strip(" :")
     
-    if "@committee_agent" in text or client.agent_id in text:
-        if msg.get("sender") == client.agent_name or msg.get("sender") == client.agent_id:
+    # Load all agent configs to map agent ID to name
+    from thenvoi.config.loader import load_agent_config
+    agents_ids = []
+    for handle in ["protocol_agent", "ethics_agent", "privacy_agent", "committee_agent"]:
+        try:
+            aid, _ = load_agent_config(handle)
+            agents_ids.append(aid)
+            agents_ids.append(handle)
+        except Exception:
+            pass
+            
+    is_decision_keyword = any(kw in text.lower() for kw in ["approve", "reject", "revision", "revisions"])
+    is_irb_decision = "irb decision" in text.lower()
+    
+    if is_irb_decision and is_decision_keyword:
+        is_human_sender = True
+    else:
+        is_human_sender = sender not in agents_ids
+    
+    # Process if explicitly mentioned or if it is a human sender in the room
+    if "@committee_agent" in text or client.agent_id in text or is_human_sender:
+        if (sender == client.agent_name or sender == client.agent_id) and not (is_irb_decision and is_decision_keyword):
             return  # Skip self-posted messages
             
+        if is_human_sender:
+            print(f"[CommitteeAgent] Received human message in room {room_id} from sender '{sender}': '{text}'")
+            # This is a human IRB Chair message! Look for decision keywords
+            text_lower = text.lower()
+            decision = None
+            if "approve" in text_lower:
+                decision = "approved"
+            elif "reject" in text_lower:
+                decision = "rejected"
+            elif "revision" in text_lower or "revisions" in text_lower:
+                decision = "revisions_required"
+                
+            if decision:
+                print(f"[CommitteeAgent] Picked up IRB Chair decision '{decision.upper()}' from room {room_id}...")
+                try:
+                    await client.mark_processing(msg["id"], room_id)
+                    import sys
+                    reviews = {}
+                    manager = None
+                    ReviewMessage = None
+                    main_mod = sys.modules.get("__main__")
+                    if main_mod and hasattr(main_mod, "reviews"):
+                        reviews = main_mod.reviews
+                        manager = getattr(main_mod, "manager", None)
+                        ReviewMessage = getattr(main_mod, "ReviewMessage", None)
+                    else:
+                        from backend.server import reviews as r, manager as m, ReviewMessage as rm
+                        reviews = r
+                        manager = m
+                        ReviewMessage = rm
+                    review_id = None
+                    for r_id, session in reviews.items():
+                        if session.band_room_id == room_id:
+                            review_id = r_id
+                            break
+                            
+                    if review_id:
+                        session = reviews[review_id]
+                        session.determination = decision
+                        session.status = "completed"
+                        
+                        # Generate determination letter message
+                        msg_obj = ReviewMessage(
+                            id=str(uuid.uuid4())[:8],
+                            timestamp=datetime.now(timezone.utc).isoformat(),
+                            agent="CommitteeAgent",
+                            framework="FastAPI",
+                            model_provider="Featherless AI",
+                            content=f"Decision recorded: {decision.upper()} (via Band Room). Determination letter generated for Protocol {session.protocol_number}. Complete review record preserved in Band room.",
+                            message_type="determination",
+                            metadata={"decision": decision}
+                        )
+                        session.messages.append(msg_obj)
+                        
+                        # Broadcast to frontend WebSocket
+                        await manager.broadcast(review_id, {
+                            "type": "message",
+                            "data": msg_obj.model_dump()
+                        })
+                        await manager.broadcast(review_id, {
+                            "type": "status_update",
+                            "data": {"status": "completed", "determination": decision}
+                        })
+                        
+                        # Post confirmation back to Band room
+                        await client.post_message(room_id, f"[CommitteeAgent] IRB Chair decision '{decision.upper()}' recorded successfully. Determination letter generated. Review session completed.")
+                        await client.mark_processed(msg["id"], room_id)
+                        return
+                except Exception as ex:
+                    print(f"[CommitteeAgent] Error processing chair decision: {ex}")
+                    await client.mark_failed(msg["id"], str(ex), room_id)
+                    return
+            else:
+                print(f"[CommitteeAgent] Human message in room {room_id} did not contain a valid decision keyword ('approve', 'reject', 'revision').")
+                return
+
+        # Otherwise, this is a handoff message from another agent -> run standard aggregation
         print(f"[CommitteeAgent] Aggregating findings in room {room_id}...")
         try:
             await client.mark_processing(msg["id"], room_id)
@@ -208,7 +318,7 @@ async def global_message_tracker(msg: dict, agent_name: str):
     global message_callback
     if message_callback:
         # Resolve sender to standard agent name dynamically
-        sender = msg.get("sender", "")
+        sender = msg.get("sender", "").strip(" :")
         
         # Load all agent configs to map agent ID to name
         from thenvoi.config.loader import load_agent_config

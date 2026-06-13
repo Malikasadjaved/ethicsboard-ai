@@ -135,13 +135,16 @@ async def lifespan(app: FastAPI):
                 })
                 
                 # Update dashboard status indicators based on active agent
-                next_status = "ethics_review" if agent == "ProtocolAgent" else (
-                    "privacy_review" if agent == "EthicsAgent" else (
-                        "committee_review" if agent == "PrivacyAgent" else (
-                            "awaiting_chair" if (agent == "CommitteeAgent" and "Please analyze" not in content) else session.status
+                if session.status == "completed" or session.determination is not None:
+                    next_status = "completed"
+                else:
+                    next_status = "ethics_review" if agent == "ProtocolAgent" else (
+                        "privacy_review" if agent == "EthicsAgent" else (
+                            "committee_review" if agent == "PrivacyAgent" else (
+                                "awaiting_chair" if (agent == "CommitteeAgent" and "Please analyze" not in content) else session.status
+                            )
                         )
                     )
-                )
                 if next_status != session.status:
                     session.status = next_status
                     await manager.broadcast(review_id, {
@@ -326,6 +329,121 @@ def extract_deficiencies_from_text(agent_name: str, text: str) -> List[dict]:
     return deficiencies
 
 
+# --- Real Band room subscription bridge ---
+
+def resolve_agent_name(sender_id: str) -> str:
+    sender = sender_id.strip(" :")
+    from thenvoi.config.loader import load_agent_config
+    handles_map = {}
+    for handle in ["protocol_agent", "ethics_agent", "privacy_agent", "committee_agent"]:
+        try:
+            aid, _ = load_agent_config(handle)
+            handles_map[aid] = handle
+        except Exception:
+            pass
+    if sender in handles_map:
+        sender = handles_map[sender]
+    return sender.lower().replace(" ", "_")
+
+
+async def subscribe_to_band_room(room_id: str, ws_manager: ConnectionManager):
+    """Bridge real Band room events to the frontend WebSocket."""
+    # Lookup review_id associated with this room
+    review_id = None
+    for r_id, session in reviews.items():
+        if session.band_room_id == room_id:
+            review_id = r_id
+            break
+            
+    # Resolve the active client to subscribe to the room
+    from agents.agent_runners import active_clients
+    band_client = active_clients.get("committee_agent")
+    if not band_client:
+        from agents.band_client import create_band_client
+        band_client = create_band_client("committee_agent")
+        
+    print(f"[Band Bridge] Subscribed dashboard WebSocket manager to room: {room_id}")
+    
+    try:
+        async with band_client.subscribe(room_id) as stream:
+            async for message in stream:
+                # 1. User's exact requested bridge broadcast pattern
+                sender_name = resolve_agent_name(message.sender_id)
+                if review_id:
+                    try:
+                        await ws_manager.broadcast(review_id, {
+                            "sender": sender_name,
+                            "content": message.content,
+                            "timestamp": message.timestamp
+                        })
+                    except Exception as e:
+                        print(f"[Band Bridge] Broadcast error: {e}")
+                        
+                # 2. Robust message mapping to make the dashboard render correctly
+                agent_title = sender_name.replace("_", " ").title().replace(" ", "")
+                framework = "LangGraph" if sender_name == "protocol_agent" else (
+                    "Pydantic AI" if sender_name == "ethics_agent" else (
+                        "CrewAI" if sender_name == "privacy_agent" else "FastAPI"
+                    )
+                )
+                provider = "Gemini 2.5 Pro" if sender_name == "protocol_agent" else (
+                    "DeepSeek-R1" if sender_name == "ethics_agent" else (
+                        "Claude Sonnet" if sender_name == "privacy_agent" else "Llama 3.1 70B"
+                    )
+                )
+                msg_type = "analysis" if sender_name == "protocol_agent" else (
+                    "finding" if sender_name in ["ethics_agent", "privacy_agent"] else "handoff"
+                )
+                
+                deficiencies = extract_deficiencies_from_text(agent_title, message.content)
+                
+                if review_id:
+                    session = reviews[review_id]
+                    import uuid
+                    msg_obj = ReviewMessage(
+                        id=str(uuid.uuid4())[:8],
+                        timestamp=message.timestamp,
+                        agent=agent_title,
+                        framework=framework,
+                        model_provider=provider,
+                        content=message.content,
+                        message_type=msg_type,
+                        deficiencies=deficiencies if deficiencies else None
+                    )
+                    
+                    # Deduplicate and append message
+                    if not any(m.content == msg_obj.content for m in session.messages):
+                        session.messages.append(msg_obj)
+                        if deficiencies:
+                            session.deficiency_count += len(deficiencies)
+                            
+                        # Broadcast formatted ReviewMessage to dashboard
+                        await ws_manager.broadcast(review_id, {
+                            "type": "message",
+                            "data": msg_obj.model_dump()
+                        })
+                        
+                        # Update status
+                        if session.status == "completed" or session.determination is not None:
+                            next_status = "completed"
+                        else:
+                            next_status = "ethics_review" if agent_title == "ProtocolAgent" else (
+                                "privacy_review" if agent_title == "EthicsAgent" else (
+                                    "committee_review" if agent_title == "PrivacyAgent" else (
+                                        "awaiting_chair" if (agent_title == "CommitteeAgent" and "Please analyze" not in message.content) else session.status
+                                    )
+                                )
+                            )
+                        if next_status != session.status:
+                            session.status = next_status
+                            await ws_manager.broadcast(review_id, {
+                                "type": "status_update",
+                                "data": {"status": next_status}
+                            })
+    except Exception as stream_err:
+        print(f"[Band Bridge] Error in subscribe_to_band_room loop: {stream_err}")
+
+
 # --- Real Pipeline using Band room and WebSocket event routing ---
 
 async def run_real_pipeline(review_id: str, file_path: str):
@@ -348,6 +466,9 @@ async def run_real_pipeline(review_id: str, file_path: str):
     try:
         room_id = await committee_client.create_room(room_name)
         session.band_room_id = room_id
+        
+        # Subscribe to room messages and bridge them to the frontend
+        asyncio.create_task(subscribe_to_band_room(room_id, manager))
         
         # Update status
         session.status = "protocol_review"
