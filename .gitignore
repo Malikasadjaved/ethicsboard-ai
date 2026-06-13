@@ -37,3 +37,6 @@ uploads/
 # Temp files
 temp_*.pdf
 results.txt
+
+# Scratch files
+scratch/
