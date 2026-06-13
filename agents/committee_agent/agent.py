@@ -7,6 +7,7 @@ Role: Aggregates findings from all specialist agents, enforces mandatory
 """
 
 import os
+import re
 import json
 import asyncio
 from datetime import datetime, timezone
@@ -24,7 +25,9 @@ featherless_client = AsyncOpenAI(
 
 from agents.llm_utils import call_llm_with_retry
 
-COMMITTEE_MODEL = "meta-llama/Llama-3.1-70B-Instruct"
+# NousResearch mirror — identical Llama 3.1 70B weights; meta-llama/ repo is
+# gated on Featherless (requires HuggingFace OAuth) and returns 403
+COMMITTEE_MODEL = "NousResearch/Meta-Llama-3.1-70B-Instruct"
 
 # --- Determination Letter Prompt ---
 
@@ -48,25 +51,61 @@ Generate a formal IRB Determination Letter with the following sections:
 Format as a professional, formal letter suitable for regulatory filing."""
 
 
+def _parse_json_deficiencies(msg: str) -> Optional[List[dict]]:
+    """Extract the structured deficiencies array from an agent's JSON findings block."""
+    match = re.search(r"\{.*\}", msg, flags=re.DOTALL)
+    if not match:
+        return None
+    try:
+        data = json.loads(match.group(0))
+        if isinstance(data, dict) and isinstance(data.get("deficiencies"), list):
+            return [d for d in data["deficiencies"] if isinstance(d, dict)]
+    except Exception:
+        pass
+    return None
+
+
+def extract_review_track(room_messages: List[str]) -> str:
+    """Read the review track chosen by ProtocolAgent's risk classification."""
+    for msg in room_messages:
+        if "REVIEW TRACK: EXPEDITED" in msg:
+            return "EXPEDITED"
+        if "REVIEW TRACK: FULL BOARD" in msg:
+            return "FULL_BOARD"
+    return "FULL_BOARD"
+
+
 async def aggregate_findings(room_messages: List[str]) -> Dict:
     """Aggregate all agent findings from Band room history."""
     deficiencies = []
     passes = []
-    
+    seen = set()
+
     for msg in room_messages:
-        # Parse deficiencies
+        # Parse structured JSON findings (ethics/privacy agents post JSON blocks)
+        structured = _parse_json_deficiencies(msg)
+        if structured:
+            for d in structured:
+                line = f"DEFICIENCY {d.get('id', '?')}: {d.get('title', 'Compliance Issue')} — {d.get('regulation', 'Unknown Regulation')} [{d.get('severity', 'major')}]"
+                if line not in seen:
+                    seen.add(line)
+                    deficiencies.append(line)
+            continue
+        # Parse legacy line-format deficiencies
         if "DEFICIENCY" in msg:
             lines = msg.split("\n")
             for line in lines:
-                if line.strip().startswith("DEFICIENCY"):
-                    deficiencies.append(line.strip())
+                stripped = line.strip()
+                if stripped.startswith("DEFICIENCY") and stripped not in seen:
+                    seen.add(stripped)
+                    deficiencies.append(stripped)
         # Parse passes
         if "PASS:" in msg:
             lines = msg.split("\n")
             for line in lines:
                 if line.strip().startswith("PASS:"):
                     passes.append(line.strip())
-    
+
     return {
         "deficiencies": deficiencies,
         "passes": passes,
@@ -95,7 +134,7 @@ async def generate_determination_letter(
             ],
             temperature=0.3,
             max_tokens=3000,
-            timeout=25.0,
+            timeout=120.0,  # Featherless serverless cold start can take ~60s
             max_retries=3
         )
         
@@ -105,13 +144,46 @@ async def generate_determination_letter(
         return f"Determination letter generation failed: {str(e)}. Manual generation required."
 
 
-async def format_hitl_request(findings: Dict, protocol_number: str) -> str:
-    """Format the HITL request message for the Band room."""
+def format_clarification_request(findings: Dict) -> str:
+    """Format the agent-to-agent clarification challenge for EthicsAgent.
+
+    Before summoning the human chair, the Committee challenges the Ethics
+    specialist on whether its most severe finding can be resolved with minor
+    revisions (which would keep an expedited track viable) or blocks approval.
+    """
+    top_finding = findings["deficiencies"][0] if findings["deficiencies"] else "No deficiencies recorded"
+    return f"""CLARIFICATION REQUEST
+
+@ethics_agent — Before I convene the IRB Chair, I need a determination from you:
+
+Your most severe finding: {top_finding}
+
+Question: Does this finding constitute a blocking deficiency that requires
+full convened-board deliberation, or can it be resolved through minor protocol
+revisions under expedited handling (45 CFR 46.110(b)(2))?
+
+Please respond with CLARIFICATION RESPONSE and your reasoning."""
+
+
+async def format_hitl_request(findings: Dict, protocol_number: str, review_track: str = "FULL_BOARD") -> str:
+    """Format the HITL request message for the Band room, routed by review track."""
     deficiency_list = "\n".join(f"  {i+1}. {d}" for i, d in enumerate(findings["deficiencies"]))
-    
+
+    if review_track == "EXPEDITED" and findings["total_deficiencies"] == 0:
+        header = """@Dr.IRBChair — EXPEDITED determination requested (45 CFR 46.110).
+This protocol was classified MINIMAL RISK and no deficiencies were found.
+A single designated-reviewer sign-off is sufficient; no convened board required."""
+    elif review_track == "EXPEDITED":
+        header = f"""ESCALATION: Expedited review terminated per 45 CFR 46.110(b).
+Protocol was classified MINIMAL RISK, but {findings['total_deficiencies']} deficiencies were identified during specialist review. Escalating to FULL BOARD review.
+
+@Dr.IRBChair — Full Board determination required."""
+    else:
+        header = "@Dr.IRBChair — Full Board determination required (45 CFR 46.108)."
+
     return f"""All findings aggregated. Invoking add_participant_service to add Dr. IRB Chair to this Band room...
 
-@Dr.IRBChair — Full Board determination required.
+{header}
 Protocol: {protocol_number}
 Findings: {findings['total_deficiencies']} deficiencies identified:
 {deficiency_list}
@@ -133,5 +205,7 @@ if __name__ == "__main__":
         "requires_full_board": True,
     }
     
-    result = asyncio.run(format_hitl_request(sample_findings, "PEDI-2026-0047"))
+    result = asyncio.run(format_hitl_request(sample_findings, "PEDI-2026-0047", "EXPEDITED"))
     print(result)
+    print("\n---\n")
+    print(format_clarification_request(sample_findings))

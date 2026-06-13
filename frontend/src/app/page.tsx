@@ -91,9 +91,15 @@ export default function Dashboard() {
   const [protocolNumber, setProtocolNumber] = useState<string>("");
   const [isUploading, setIsUploading] = useState(false);
   const [determination, setDetermination] = useState<string | null>(null);
+  const [reviewTrack, setReviewTrack] = useState<"expedited" | "full_board" | null>(null);
+  const [escalated, setEscalated] = useState(false);
+  const [bandRoomId, setBandRoomId] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
 
   // --- Derive agent statuses from review status ---
+  // Ethics and Privacy review IN PARALLEL after the protocol dispatch; during
+  // the committee challenge phase Ethics goes active again (it is defending
+  // its finding), while the Committee coordinates.
   const getAgentStatus = useCallback(
     (agentName: string): AgentStatus => {
       const statusMap: Record<ReviewStatus, Record<string, AgentStatus>> = {
@@ -103,17 +109,22 @@ export default function Dashboard() {
           ProtocolAgent: "active",
         },
         ethics_review: {
+          // Parallel phase: both specialists work simultaneously
           ProtocolAgent: "complete",
           EthicsAgent: "active",
+          PrivacyAgent: "active",
         },
         privacy_review: {
+          // Still the parallel phase — one review has landed, both shown active
+          // until the Committee confirms it has both
           ProtocolAgent: "complete",
-          EthicsAgent: "complete",
+          EthicsAgent: "active",
           PrivacyAgent: "active",
         },
         committee_review: {
+          // Challenge phase: Committee questions Ethics, which must respond
           ProtocolAgent: "complete",
-          EthicsAgent: "complete",
+          EthicsAgent: "active",
           PrivacyAgent: "complete",
           CommitteeAgent: "active",
         },
@@ -153,6 +164,18 @@ export default function Dashboard() {
         if (msg.deficiencies && msg.deficiencies.length > 0) {
           setDeficiencies((prev) => [...prev, ...msg.deficiencies!]);
         }
+
+        // Derive the review track from the ProtocolAgent's routing decision
+        if (msg.content.includes("REVIEW TRACK: EXPEDITED")) {
+          setReviewTrack("expedited");
+        } else if (msg.content.includes("REVIEW TRACK: FULL BOARD")) {
+          setReviewTrack("full_board");
+        }
+        // Expedited reviews escalate to full board when deficiencies surface
+        if (msg.content.includes("ESCALATION:")) {
+          setEscalated(true);
+          setReviewTrack("full_board");
+        }
       }
 
       if (data.type === "status_update") {
@@ -172,6 +195,26 @@ export default function Dashboard() {
     };
   }, [reviewId]);
 
+  // --- Fetch the real Band room ID (created asynchronously after upload) ---
+  useEffect(() => {
+    if (!reviewId || bandRoomId) return;
+    const timer = setInterval(async () => {
+      try {
+        const res = await fetch(`${API_URL}/api/review/${reviewId}`);
+        if (res.ok) {
+          const data = await res.json();
+          if (data.band_room_id) {
+            setBandRoomId(data.band_room_id);
+            clearInterval(timer);
+          }
+        }
+      } catch {
+        // backend not ready yet — keep polling
+      }
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [reviewId, bandRoomId]);
+
   // --- Upload handler ---
   const handleUpload = useCallback(
     async (file: File) => {
@@ -179,6 +222,9 @@ export default function Dashboard() {
       setMessages([]);
       setDeficiencies([]);
       setDetermination(null);
+      setReviewTrack(null);
+      setEscalated(false);
+      setBandRoomId(null);
       setStatus("pending");
 
       try {
@@ -285,6 +331,31 @@ export default function Dashboard() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
+                  {/* Risk-based review track badge */}
+                  {reviewTrack && (
+                    <span
+                      className={`px-3 py-1 rounded-full text-xs font-semibold border ${
+                        escalated
+                          ? "bg-red-500/15 text-red-400 border-red-500/30"
+                          : reviewTrack === "expedited"
+                          ? "bg-cyan-500/15 text-cyan-400 border-cyan-500/30"
+                          : "bg-indigo-500/15 text-indigo-400 border-indigo-500/30"
+                      }`}
+                      title={
+                        escalated
+                          ? "Expedited review terminated per 45 CFR 46.110(b) — deficiencies found"
+                          : reviewTrack === "expedited"
+                          ? "Minimal risk — designated-reviewer sign-off (45 CFR 46.110)"
+                          : "Greater than minimal risk — convened board required (45 CFR 46.108)"
+                      }
+                    >
+                      {escalated
+                        ? "⚠ Escalated to Full Board"
+                        : reviewTrack === "expedited"
+                        ? "⚡ Expedited Track"
+                        : "🏛 Full Board Track"}
+                    </span>
+                  )}
                   {determination && (
                     <span
                       className={`px-3 py-1 rounded-full text-xs font-semibold ${
@@ -301,8 +372,10 @@ export default function Dashboard() {
                           determination.slice(1)}
                     </span>
                   )}
-                  <span className="text-xs text-gray-500 font-mono">
-                    Band Room: IRB-Review-{protocolNumber}
+                  <span className="text-xs text-gray-500 font-mono" title={bandRoomId || undefined}>
+                    {bandRoomId
+                      ? `Band Room: ${bandRoomId.slice(0, 8)}…`
+                      : "Band Room: connecting…"}
                   </span>
                 </div>
               </div>

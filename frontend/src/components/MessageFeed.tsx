@@ -50,9 +50,15 @@ function formatTimestamp(ts: string) {
   }
 }
 
+// Friendly fallback for any Band-rewritten mention (@[[uuid]]) the backend
+// didn't already prettify
+function normalizeMentions(content: string): string {
+  return content.replace(/@\[\[[0-9a-fA-F-]+\]\]/g, '@agent');
+}
+
 function highlightContent(content: string) {
-  // Highlight @mentions
-  let parts = content.split(/(@\w+)/g);
+  // Highlight @mentions (handles like @ethics_agent and @Dr.IRBChair)
+  const parts = normalizeMentions(content).split(/(@[\w.]+)/g);
   return parts.map((part, i) => {
     if (part.startsWith('@')) {
       return (
@@ -65,7 +71,19 @@ function highlightContent(content: string) {
   });
 }
 
-function getMessageBorderType(content: string, messageType: string): 'deficiency' | 'pass' | 'none' {
+type ChallengeKind = 'request' | 'response' | null;
+
+function getChallengeKind(content: string): ChallengeKind {
+  const stripped = content.trimStart();
+  if (stripped.startsWith('CLARIFICATION REQUEST')) return 'request';
+  if (stripped.startsWith('CLARIFICATION RESPONSE')) return 'response';
+  return null;
+}
+
+function getMessageBorderType(content: string, messageType: string): 'deficiency' | 'pass' | 'challenge' | 'none' {
+  // The agent-to-agent challenge exchange gets its own styling — it mentions
+  // "blocking deficiency" but is coordination, not a new finding
+  if (getChallengeKind(content)) return 'challenge';
   const lower = content.toLowerCase();
   if (messageType === 'deficiency' || lower.includes('deficiency') || lower.includes('violation') || lower.includes('non-compliant') || lower.includes('critical')) {
     return 'deficiency';
@@ -139,6 +157,7 @@ export default function MessageFeed({ messages }: MessageFeedProps) {
           const color = agentColors[msg.agent] || '#64748b';
           const agentIcon = agentIcons[msg.agent] || '🤖';
           const borderType = getMessageBorderType(msg.content, msg.message_type);
+          const challengeKind = getChallengeKind(msg.content);
           const isVisible = visibleMessages.has(msg.id);
 
           return (
@@ -156,9 +175,27 @@ export default function MessageFeed({ messages }: MessageFeedProps) {
                   bg-[#111128]/40 hover:bg-[#151535]/60
                   ${borderType === 'deficiency' ? 'border-l-2 border-l-red-500/70' : ''}
                   ${borderType === 'pass' ? 'border-l-2 border-l-emerald-500/70' : ''}
+                  ${borderType === 'challenge' ? 'border-l-2 border-l-amber-500/70 bg-amber-950/10' : ''}
                   ${borderType === 'none' ? 'border-l-2 border-l-transparent' : ''}
                 `}
               >
+                {/* Agent-to-agent challenge banner */}
+                {challengeKind && (
+                  <div className="flex items-center gap-2 mb-2 -mt-0.5">
+                    <span className={`
+                      inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full border text-[9px] font-bold uppercase tracking-widest
+                      ${challengeKind === 'request'
+                        ? 'bg-amber-500/15 text-amber-400 border-amber-500/30'
+                        : 'bg-purple-500/15 text-purple-400 border-purple-500/30'
+                      }
+                    `}>
+                      {challengeKind === 'request' ? '⚔️ Agent Challenge' : '🛡️ Challenge Response'}
+                    </span>
+                    <span className="text-[9px] text-slate-500 font-mono">
+                      {challengeKind === 'request' ? 'Committee → Ethics' : 'Ethics → Committee'}
+                    </span>
+                  </div>
+                )}
                 {/* Message Header */}
                 <div className="flex items-center gap-2 mb-2">
                   {/* Agent Avatar */}

@@ -12,7 +12,7 @@ from openai import AsyncOpenAI
 from agents.llm_utils import call_llm_with_retry
 
 load_dotenv()
-geminimodel = os.getenv("GEMINI_MODEL", "google/gemini-2.5-pro")
+geminimodel = os.getenv("GEMINI_MODEL", "gemini-2.5-pro")
 client = AsyncOpenAI(
     api_key=os.getenv("AIML_API_KEY"), base_url=os.getenv("AIML_BASE_URL")
 )
@@ -64,7 +64,7 @@ async def analyze_protocol(pdf_text: str) -> str:
                 Return as structured JSON.""",
                 }
             ],
-            timeout=15.0,
+            timeout=45.0,
             max_retries=3
         )
         return response.choices[0].message.content
@@ -74,7 +74,7 @@ async def analyze_protocol(pdf_text: str) -> str:
         try:
             response = await call_llm_with_retry(
                 client=client,
-                model="meta-llama/Llama-3.3-70B-Instruct",
+                model="meta-llama/Llama-3.3-70B-Instruct-Turbo",
                 messages=[
                     {
                         "role": "user",
@@ -91,7 +91,7 @@ async def analyze_protocol(pdf_text: str) -> str:
                     Return as structured JSON.""",
                     }
                 ],
-                timeout=15.0,
+                timeout=45.0,
                 max_retries=3
             )
             return response.choices[0].message.content

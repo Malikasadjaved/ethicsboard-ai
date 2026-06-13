@@ -58,6 +58,99 @@ websocket_connections: Dict[str, List[WebSocket]] = {}
 room_to_review: Dict[str, str] = {}
 active_subscription_tasks: Dict[str, asyncio.Task] = {}
 
+# Reviews run in parallel, so agent messages can arrive in any order —
+# status may only move forward through this sequence, never backwards.
+STATUS_ORDER = ["pending", "protocol_review", "ethics_review", "privacy_review",
+                "committee_review", "awaiting_chair", "completed"]
+
+
+def advance_status(current: str, proposed: str) -> str:
+    """Return the later of two statuses in the pipeline order."""
+    try:
+        if STATUS_ORDER.index(proposed) > STATUS_ORDER.index(current):
+            return proposed
+    except ValueError:
+        pass
+    return current
+
+
+_mention_map: Optional[Dict[str, str]] = None
+
+
+def _get_mention_map() -> Dict[str, str]:
+    """UUID → friendly handle map for prettifying Band's rewritten mentions."""
+    global _mention_map
+    if _mention_map is None:
+        _mention_map = {}
+        try:
+            from thenvoi.config.loader import load_agent_config
+            for handle in ["protocol_agent", "ethics_agent", "privacy_agent", "committee_agent"]:
+                try:
+                    aid, _ = load_agent_config(handle)
+                    _mention_map[aid] = handle
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        chair_id = os.getenv("BAND_IRB_CHAIR_USER_ID", "")
+        if chair_id:
+            _mention_map[chair_id] = "Dr.IRBChair"
+    return _mention_map
+
+
+def prettify_mentions(text: str) -> str:
+    """Replace Band's rewritten mentions (@[[uuid]]) with friendly @handles."""
+    mention_map = _get_mention_map()
+
+    def _sub(match: "re.Match[str]") -> str:
+        uuid_str = match.group(1)
+        handle = mention_map.get(uuid_str)
+        return f"@{handle}" if handle else "@agent"
+
+    return re.sub(r"@\[\[([0-9a-fA-F-]+)\]\]", _sub, text)
+
+
+def infer_agent_from_content(text: str) -> Optional[str]:
+    """Identify the posting agent from the message's structural markers.
+
+    Sender resolution can race in fallback mode (all four clients forward every
+    room message); the markers are authoritative for our message types.
+    Clarification markers must be checked by leading line, not substring — the
+    REQUEST body contains the literal phrase "CLARIFICATION RESPONSE".
+    """
+    stripped = text.lstrip()
+    if stripped.startswith("CLARIFICATION REQUEST"):
+        return "committee_agent"
+    if stripped.startswith("CLARIFICATION RESPONSE"):
+        return "ethics_agent"
+    if "ETHICS REVIEW FINDINGS" in text:
+        return "ethics_agent"
+    if "PRIVACY REVIEW FINDINGS" in text:
+        return "privacy_agent"
+    if "All findings aggregated" in text or "IRB Chair decision" in text:
+        return "committee_agent"
+    if "REVIEW TRACK:" in text or "risk_classification" in text:
+        return "protocol_agent"
+    return None
+
+
+def status_for_agent_message(agent: str, content: str, current: str) -> str:
+    """Map an incoming agent message to the dashboard pipeline status."""
+    if agent == "ProtocolAgent":
+        proposed = "ethics_review"  # parallel ethics + privacy reviews dispatched
+    elif agent in ("EthicsAgent", "PrivacyAgent"):
+        proposed = "privacy_review" if "CLARIFICATION RESPONSE" not in content else "committee_review"
+    elif agent == "CommitteeAgent":
+        if "All findings aggregated" in content:
+            proposed = "awaiting_chair"
+        elif "Please analyze" in content:
+            proposed = current
+        else:
+            proposed = "committee_review"  # clarification challenge in progress
+    else:
+        proposed = current
+    return advance_status(current, proposed)
+
 
 # --- WebSocket Manager ---
 
@@ -110,8 +203,16 @@ async def lifespan(app: FastAPI):
         if review_id:
             content = dash_msg.get("content", "")
             agent = dash_msg.get("agent")
-            deficiencies = extract_deficiencies_from_text(agent, content)
-            display_content = extract_analysis_from_text(content)
+            inferred = infer_agent_from_content(content)
+            if inferred:
+                agent = inferred.replace("_", " ").title().replace(" ", "")
+            # Clarification exchanges restate existing findings — extracting
+            # deficiencies from them would double-count
+            if "CLARIFICATION" in content:
+                deficiencies = []
+            else:
+                deficiencies = extract_deficiencies_from_text(agent, content)
+            display_content = prettify_mentions(extract_analysis_from_text(content))
             
             session = reviews[review_id]
             
@@ -144,13 +245,7 @@ async def lifespan(app: FastAPI):
                 if session.status == "completed" or session.determination is not None:
                     next_status = "completed"
                 else:
-                    next_status = "ethics_review" if agent == "ProtocolAgent" else (
-                        "privacy_review" if agent == "EthicsAgent" else (
-                            "committee_review" if agent == "PrivacyAgent" else (
-                                "awaiting_chair" if (agent == "CommitteeAgent" and "Please analyze" not in content) else session.status
-                            )
-                        )
-                    )
+                    next_status = status_for_agent_message(agent, content, session.status)
                 if next_status != session.status:
                     session.status = next_status
                     await manager.broadcast(review_id, {
@@ -242,7 +337,26 @@ async def submit_decision(review_id: str, decision: dict):
     choice = decision.get("decision", "revisions_required")
     session.determination = choice
     session.status = "completed"
-    
+
+    # Record the chair's decision in the Band room — the room history is the
+    # audit ledger, so a dashboard decision must leave a trace there too.
+    # (Worded without the "IRB Decision" trigger phrase so the CommitteeAgent
+    # records it as audit context rather than re-processing it.)
+    if session.band_room_id:
+        try:
+            from agents.agent_runners import active_clients
+            from agents.band_client import create_band_client
+            band_client = active_clients.get("committee_agent") or create_band_client("committee_agent")
+            await band_client.post_message(
+                session.band_room_id,
+                f"[AUDIT] Chair determination recorded via dashboard: {choice.upper()}. "
+                f"Protocol {session.protocol_number}. Determination letter generated. "
+                f"Review session completed."
+            )
+            print(f"[Backend] Chair decision '{choice}' recorded in Band room {session.band_room_id}")
+        except Exception as e:
+            print(f"[Backend] Warning: could not record decision in Band room: {e}")
+
     # Cancel room subscription task if active
     task = active_subscription_tasks.pop(review_id, None)
     if task:
@@ -295,10 +409,15 @@ def extract_analysis_from_text(text: str) -> str:
         matches = list(re.finditer(r"```(?:json)?\s*(.*?)\s*```", clean_text, flags=re.DOTALL))
         if matches:
             clean_text = matches[-1].group(1).strip()
-        
+
         # Strip DeepSeek thinking process if present
         clean_text = re.sub(r"<think>.*?</think>", "", clean_text, flags=re.DOTALL).strip()
-        
+
+        # Findings may carry marker prefixes/handoff suffixes around the JSON body
+        json_match = re.search(r"\{.*\}", clean_text, flags=re.DOTALL)
+        if json_match:
+            clean_text = json_match.group(0)
+
         data = json.loads(clean_text)
         if isinstance(data, dict) and "analysis" in data:
             return data["analysis"]
@@ -314,10 +433,15 @@ def extract_deficiencies_from_text(agent_name: str, text: str) -> List[dict]:
         matches = list(re.finditer(r"```(?:json)?\s*(.*?)\s*```", clean_text, flags=re.DOTALL))
         if matches:
             clean_text = matches[-1].group(1).strip()
-        
+
         # Strip DeepSeek thinking process if present
         clean_text = re.sub(r"<think>.*?</think>", "", clean_text, flags=re.DOTALL).strip()
-        
+
+        # Findings may carry marker prefixes/handoff suffixes around the JSON body
+        json_match = re.search(r"\{.*\}", clean_text, flags=re.DOTALL)
+        if json_match:
+            clean_text = json_match.group(0)
+
         data = json.loads(clean_text)
         if isinstance(data, dict) and "deficiencies" in data:
             raw_defs = data["deficiencies"]
@@ -432,8 +556,8 @@ async def subscribe_to_band_room(room_id: str, ws_manager: ConnectionManager):
         async with band_client.subscribe(room_id) as stream:
             async for message in stream:
                 # 1. User's exact requested bridge broadcast pattern
-                sender_name = resolve_agent_name(message.sender_id)
-                display_content = extract_analysis_from_text(message.content)
+                sender_name = infer_agent_from_content(message.content) or resolve_agent_name(message.sender_id)
+                display_content = prettify_mentions(extract_analysis_from_text(message.content))
                 if review_id:
                     try:
                         await ws_manager.broadcast(review_id, {
@@ -460,8 +584,11 @@ async def subscribe_to_band_room(room_id: str, ws_manager: ConnectionManager):
                     "finding" if sender_name in ["ethics_agent", "privacy_agent"] else "handoff"
                 )
                 
-                deficiencies = extract_deficiencies_from_text(agent_title, message.content)
-                
+                if "CLARIFICATION" in message.content:
+                    deficiencies = []  # clarification exchanges restate existing findings
+                else:
+                    deficiencies = extract_deficiencies_from_text(agent_title, message.content)
+
                 if review_id:
                     session = reviews[review_id]
                     import uuid
@@ -492,13 +619,7 @@ async def subscribe_to_band_room(room_id: str, ws_manager: ConnectionManager):
                         if session.status == "completed" or session.determination is not None:
                             next_status = "completed"
                         else:
-                            next_status = "ethics_review" if agent_title == "ProtocolAgent" else (
-                                "privacy_review" if agent_title == "EthicsAgent" else (
-                                    "committee_review" if agent_title == "PrivacyAgent" else (
-                                        "awaiting_chair" if (agent_title == "CommitteeAgent" and "Please analyze" not in message.content) else session.status
-                                    )
-                                )
-                            )
+                            next_status = status_for_agent_message(agent_title, message.content, session.status)
                         if next_status != session.status:
                             session.status = next_status
                             await ws_manager.broadcast(review_id, {
@@ -557,101 +678,155 @@ async def run_real_pipeline(review_id: str, file_path: str):
     except Exception as e:
         print(f"[Backend] Error starting real pipeline: {e}. Falling back to mock pipeline.")
         asyncio.create_task(run_mock_pipeline(review_id, file_path))
-        asyncio.create_task(run_mock_pipeline(review_id, file_path))
 
 
 # --- Mock Pipeline (replaced with real Band integration on Day 1) ---
 
 async def run_mock_pipeline(review_id: str, file_path: str):
-    """Simulate the 4-agent pipeline but using real LLM API calls instead of hardcoded strings."""
+    """Simulate the 4-agent pipeline but using real LLM API calls instead of hardcoded strings.
+
+    Mirrors the real Band flow: risk-based track routing, parallel ethics+privacy
+    reviews, a Committee→Ethics clarification round-trip, then HITL.
+    """
     from agents.protocol_agent.agent import extract_pdf_text, analyze_protocol
-    from agents.ethics_agent.agent import ethics_review
+    from agents.ethics_agent.agent import ethics_review, ethics_clarification
     from agents.privacy_agent.agent import privacy_review
-    
+    from agents.agent_runners import extract_risk_classification
+    from agents.committee_agent.agent import format_clarification_request
+
     session = reviews[review_id]
     session.deficiency_count = 0
-    
+
     # Extract PDF
     pdf_text = extract_pdf_text(file_path)
-    
-    # Step 1: ProtocolAgent
+
+    # Step 1: ProtocolAgent — analyze and choose the review track
     session.status = "protocol_review"
     await manager.broadcast(review_id, {"type": "status_update", "data": {"status": "protocol_review"}})
-    
+
     protocol_summary = await analyze_protocol(pdf_text)
-    
+    risk = extract_risk_classification(protocol_summary)
+    review_track = "EXPEDITED" if risk == "MINIMAL" else "FULL_BOARD"
+    track_line = (
+        "RISK: MINIMAL → REVIEW TRACK: EXPEDITED (45 CFR 46.110)"
+        if review_track == "EXPEDITED"
+        else "RISK: GREATER THAN MINIMAL → REVIEW TRACK: FULL BOARD (45 CFR 46.108)"
+    )
+
     msg1 = ReviewMessage(
         id=str(uuid.uuid4())[:8],
         timestamp=datetime.now(timezone.utc).isoformat(),
         agent="ProtocolAgent",
         framework="LangGraph",
         model_provider="AI/ML API (Gemini 2.5 Pro)",
-        content=f"{protocol_summary}\n\n@EthicsAgent — please assess informed consent adequacy and risk-benefit ratio.",
+        content=f"{protocol_summary}\n\n{track_line}\n\nDispatching parallel specialist reviews:\n@EthicsAgent — please assess informed consent adequacy and risk-benefit ratio.\n@PrivacyAgent — please review data handling and HIPAA compliance.",
         message_type="analysis",
-        metadata={}
+        metadata={"review_track": review_track}
     )
     session.messages.append(msg1)
     await manager.broadcast(review_id, {"type": "message", "data": msg1.model_dump()})
-    
-    # Step 2: EthicsAgent
+
+    # Steps 2+3: EthicsAgent and PrivacyAgent review CONCURRENTLY
     session.status = "ethics_review"
     await manager.broadcast(review_id, {"type": "status_update", "data": {"status": "ethics_review"}})
-    
-    ethics_result = await ethics_review(protocol_summary)
+
+    ethics_result, privacy_result = await asyncio.gather(
+        ethics_review(protocol_summary),
+        privacy_review(pdf_text),
+    )
+
     ethics_defs = extract_deficiencies_from_text("EthicsAgent", ethics_result)
     ethics_analysis = extract_analysis_from_text(ethics_result)
     session.deficiency_count += len(ethics_defs)
-    
+
     msg2 = ReviewMessage(
         id=str(uuid.uuid4())[:8],
         timestamp=datetime.now(timezone.utc).isoformat(),
         agent="EthicsAgent",
         framework="Pydantic AI",
         model_provider="Featherless AI (DeepSeek-R1)",
-        content=f"{ethics_analysis}\n\n@PrivacyAgent — please review data handling and HIPAA compliance.",
+        content=f"{ethics_analysis}\n\n@CommitteeAgent — ethics review complete.",
         message_type="finding",
         deficiencies=ethics_defs
     )
     session.messages.append(msg2)
     await manager.broadcast(review_id, {"type": "message", "data": msg2.model_dump()})
-    
-    # Step 3: PrivacyAgent
+
     session.status = "privacy_review"
     await manager.broadcast(review_id, {"type": "status_update", "data": {"status": "privacy_review"}})
-    
-    privacy_result = await privacy_review(pdf_text)
+
     privacy_defs = extract_deficiencies_from_text("PrivacyAgent", privacy_result)
     privacy_analysis = extract_analysis_from_text(privacy_result)
     session.deficiency_count += len(privacy_defs)
-    
+
     msg3 = ReviewMessage(
         id=str(uuid.uuid4())[:8],
         timestamp=datetime.now(timezone.utc).isoformat(),
         agent="PrivacyAgent",
         framework="CrewAI",
         model_provider="AI/ML API (Claude Sonnet)",
-        content=f"{privacy_analysis}\n\n@CommitteeAgent — Findings available. Human chair approval needed.",
+        content=f"{privacy_analysis}\n\n@CommitteeAgent — privacy review complete.",
         message_type="finding",
         deficiencies=privacy_defs
     )
     session.messages.append(msg3)
     await manager.broadcast(review_id, {"type": "message", "data": msg3.model_dump()})
-    
-    # Step 4: CommitteeAgent
-    await asyncio.sleep(3)
-    session.status = "awaiting_chair"
+
+    # Step 4: CommitteeAgent challenges EthicsAgent before convening the chair
+    session.status = "committee_review"
+    await manager.broadcast(review_id, {"type": "status_update", "data": {"status": "committee_review"}})
+
+    findings_lines = [f"DEFICIENCY {d['id']}: {d['title']} — {d['regulation']} [{d['severity']}]" for d in (ethics_defs + privacy_defs)]
+    clarification_req = format_clarification_request({"deficiencies": findings_lines, "total_deficiencies": len(findings_lines)})
+
     msg4 = ReviewMessage(
         id=str(uuid.uuid4())[:8],
         timestamp=datetime.now(timezone.utc).isoformat(),
         agent="CommitteeAgent",
         framework="FastAPI",
         model_provider="Featherless AI (Llama 3.1 70B)",
-        content=f"All findings aggregated. Adding Dr. IRB Chair to review room via Band add_participant_service...\n\n@Dr.IRBChair — Full Board determination required.\nFindings: {session.deficiency_count} deficiencies detected ({len(ethics_defs)} ethics, {len(privacy_defs)} privacy).\nProtocol cannot proceed without your decision.\n\nPlease select: APPROVE / REQUEST REVISIONS / REJECT",
+        content=clarification_req,
         message_type="handoff",
-        metadata={"requires_human_decision": True, "total_deficiencies": session.deficiency_count}
+        metadata={"agent_to_agent_challenge": True}
     )
     session.messages.append(msg4)
     await manager.broadcast(review_id, {"type": "message", "data": msg4.model_dump()})
+
+    clarification_answer = await ethics_clarification(clarification_req)
+    msg5 = ReviewMessage(
+        id=str(uuid.uuid4())[:8],
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        agent="EthicsAgent",
+        framework="Pydantic AI",
+        model_provider="Featherless AI (DeepSeek-R1)",
+        content=f"CLARIFICATION RESPONSE\n\n{clarification_answer}\n\n@CommitteeAgent — clarification provided. Proceed with your determination.",
+        message_type="finding",
+        metadata={"clarification_response": True}
+    )
+    session.messages.append(msg5)
+    await manager.broadcast(review_id, {"type": "message", "data": msg5.model_dump()})
+
+    # Step 5: CommitteeAgent convenes the chair (with expedited→full-board escalation)
+    session.status = "awaiting_chair"
+    if review_track == "EXPEDITED" and session.deficiency_count > 0:
+        hitl_header = f"ESCALATION: Expedited review terminated per 45 CFR 46.110(b) — {session.deficiency_count} deficiencies found during specialist review. Escalating to FULL BOARD review.\n\n@Dr.IRBChair — Full Board determination required."
+    elif review_track == "EXPEDITED":
+        hitl_header = "@Dr.IRBChair — EXPEDITED determination requested (45 CFR 46.110). Minimal risk, no deficiencies — designated-reviewer sign-off is sufficient."
+    else:
+        hitl_header = "@Dr.IRBChair — Full Board determination required (45 CFR 46.108)."
+
+    msg6 = ReviewMessage(
+        id=str(uuid.uuid4())[:8],
+        timestamp=datetime.now(timezone.utc).isoformat(),
+        agent="CommitteeAgent",
+        framework="FastAPI",
+        model_provider="Featherless AI (Llama 3.1 70B)",
+        content=f"All findings aggregated. Adding Dr. IRB Chair to review room via Band add_participant_service...\n\n{hitl_header}\nFindings: {session.deficiency_count} deficiencies detected ({len(ethics_defs)} ethics, {len(privacy_defs)} privacy).\nProtocol cannot proceed without your decision.\n\nPlease select: APPROVE / REQUEST REVISIONS / REJECT",
+        message_type="handoff",
+        metadata={"requires_human_decision": True, "total_deficiencies": session.deficiency_count, "review_track": review_track}
+    )
+    session.messages.append(msg6)
+    await manager.broadcast(review_id, {"type": "message", "data": msg6.model_dump()})
     await manager.broadcast(review_id, {"type": "status_update", "data": {"status": "awaiting_chair"}})
 
 

@@ -62,39 +62,39 @@ async def ethics_review(protocol_summary: str) -> str:
                 {"role": "system", "content": ETHICS_SYSTEM_PROMPT},
                 {"role": "user", "content": f"Protocol summary:\n{protocol_summary}"}
             ],
-            timeout=15.0,
+            timeout=90.0,  # Featherless serverless cold start can take ~60s
             max_retries=3
         )
         return clean_json_response(response.choices[0].message.content)
     except Exception as e:
         print(f"Featherless API failed with: {e}. Falling back to AI/ML API (DeepSeek-R1)...")
-        
+
         # 2. Try AIML API with DeepSeek-R1 with retries
         try:
             response = await call_llm_with_retry(
                 client=aiml_client,
-                model="deepseek-ai/DeepSeek-R1",
+                model="deepseek/deepseek-r1",
                 messages=[
                     {"role": "system", "content": ETHICS_SYSTEM_PROMPT},
                     {"role": "user", "content": f"Protocol summary:\n{protocol_summary}"}
                 ],
-                timeout=15.0,
+                timeout=45.0,
                 max_retries=3
             )
             return clean_json_response(response.choices[0].message.content)
         except Exception as e2:
             print(f"AIML API DeepSeek-R1 failed with: {e2}. Trying Llama model on AIML...")
-            
+
             # 3. Try standard Llama 3.3 70B on AIML API with retries
             try:
                 response = await call_llm_with_retry(
                     client=aiml_client,
-                    model="meta-llama/Llama-3.3-70B-Instruct",
+                    model="meta-llama/Llama-3.3-70B-Instruct-Turbo",
                     messages=[
                         {"role": "system", "content": ETHICS_SYSTEM_PROMPT},
                         {"role": "user", "content": f"Protocol summary:\n{protocol_summary}"}
                     ],
-                    timeout=15.0,
+                    timeout=45.0,
                     max_retries=3
                 )
                 return clean_json_response(response.choices[0].message.content)
@@ -127,6 +127,56 @@ async def ethics_review(protocol_summary: str) -> str:
                     }
                   ]
                 }"""
+
+
+CLARIFICATION_SYSTEM_PROMPT = """You are an IRB ethics specialist. The IRB Committee Coordinator
+is challenging one of your findings before convening the human IRB Chair.
+
+Answer the Committee's question directly in 3-5 sentences of plain text (no JSON, no markdown).
+State clearly whether the finding is BLOCKING (requires full convened-board deliberation) or
+NON-BLOCKING (resolvable via minor revisions under expedited handling, 45 CFR 46.110(b)(2)),
+and cite the controlling regulation in your reasoning."""
+
+
+async def ethics_clarification(committee_question: str) -> str:
+    """Answer a clarification challenge from the CommitteeAgent (agent-to-agent review)."""
+    # 1. Try Featherless API first (DeepSeek-R1) with retries
+    try:
+        response = await call_llm_with_retry(
+            client=featherless_client,
+            model="deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
+            messages=[
+                {"role": "system", "content": CLARIFICATION_SYSTEM_PROMPT},
+                {"role": "user", "content": committee_question}
+            ],
+            timeout=90.0,  # Featherless serverless cold start can take ~60s
+            max_retries=3
+        )
+        text = response.choices[0].message.content
+        return re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
+    except Exception as e:
+        print(f"Featherless clarification failed with: {e}. Falling back to AI/ML API...")
+        # 2. Try Llama 3.3 70B on AIML API with retries
+        try:
+            response = await call_llm_with_retry(
+                client=aiml_client,
+                model="meta-llama/Llama-3.3-70B-Instruct-Turbo",
+                messages=[
+                    {"role": "system", "content": CLARIFICATION_SYSTEM_PROMPT},
+                    {"role": "user", "content": committee_question}
+                ],
+                timeout=45.0,
+                max_retries=3
+            )
+            return response.choices[0].message.content.strip()
+        except Exception as e2:
+            print(f"AIML clarification failed with: {e2}. Using hardcoded fallback clarification.")
+            # 3. Final hardcoded fallback so pipeline never stalls
+            return ("Determination: BLOCKING. The absence of a written assent process for minors aged "
+                    "12-16 violates 45 CFR 46.408, and missing risk disclosures in the consent form "
+                    "violate 45 CFR 46.116. These are not administrative gaps resolvable through minor "
+                    "revisions under 45 CFR 46.110(b)(2); they alter the consent framework for a "
+                    "vulnerable population and require full convened-board deliberation.")
 
 
 

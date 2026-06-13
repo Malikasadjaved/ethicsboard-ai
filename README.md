@@ -15,6 +15,9 @@ EthicsBoard AI is an automated Institutional Review Board (IRB) review pipeline 
   3. **@PrivacyAgent** (Claude 3.5 Sonnet via AI/ML API) — Assesses HIPAA data governance, access controls, and retention.
   4. **@CommitteeAgent** (Llama 3.1 70B via Featherless AI) — Aggregates findings and acts as the Human-in-the-Loop (HITL) coordinator.
 * **Band as the Audit Ledger**: The agents share no direct APIs. All handoffs, analyses, and messages happen via `@mention` routing in a single, secure Band room. The room history is the immutable, legally mandated audit ledger. Unlike a traditional dashboard log, this history is owned by the Band platform — tamper-evident, sequential, and accessible to all review participants including the IRB Chair.
+* **Risk-Based Review Routing**: ProtocolAgent's risk classification routes the workflow — MINIMAL RISK protocols enter the **EXPEDITED track** (45 CFR 46.110, designated-reviewer sign-off), while GREATER THAN MINIMAL protocols require **FULL BOARD review** (45 CFR 46.108). If specialists find deficiencies on an expedited protocol, the Committee **escalates it to full board** per 45 CFR 46.110(b).
+* **Parallel Specialist Reviews**: Ethics and privacy reviews are independent, so ProtocolAgent dispatches both in a single message — `@EthicsAgent` and `@PrivacyAgent` review **concurrently**, and the CommitteeAgent waits until both findings land in the Band room before proceeding.
+* **Agent-to-Agent Challenge**: Before convening the human chair, the CommitteeAgent **challenges the EthicsAgent** on its most severe finding — is it blocking, or resolvable via minor revisions under 45 CFR 46.110(b)(2)? The Ethics specialist must defend its determination in the room before the review advances.
 * **Rigorous Regulatory Citations**: Automatically flags compliance issues against **45 CFR 46** (informed consent and minor assent) and **HIPAA 45 CFR 164** (Business Associate Agreements and de-identification standards).
 * **Robust Model Coverage**: Powered by both **Featherless AI** (open-source reasoning models like DeepSeek-R1) and **AI/ML API** (Claude, Gemini, Llama) with smart fallback execution.
 * **Human-in-the-Loop (HITL) Gate**: Integrates a real `add_participant_service` invocation to dynamically pull the human IRB Chair into the Band room for final binding approval.
@@ -39,24 +42,31 @@ Researcher
     ▼
 Band Chat Room: "IRB Review — Protocol #IRB-PEDI-2026-0047"
     │
-    ├── @ProtocolAgent     ← Google ADK + Gemini 2.5 Pro
-    │       Parses protocol PDF, extracts structured fields,
-    │       classifies risk level, initiates Band room workflow
-    │
-    ├── @EthicsAgent       ← Featherless AI (DeepSeek-R1)
-    │       Reviews informed consent, Belmont Report principles,
-    │       vulnerable population protections, assent requirements
-    │
-    ├── @PrivacyAgent      ← AI/ML API (Claude 3.5 Sonnet)
-    │       Checks HIPAA compliance, data sharing agreements,
-    │       BAA requirements, retention policy, de-identification
-    │
-    └── @CommitteeAgent    ← Featherless AI (Llama 3.1 70B) + Band HITL
-            Aggregates findings, enforces mandatory human
-            IRB chair approval, generates determination letter
+    @ProtocolAgent              ← Google ADK + Gemini 2.5 Pro
+        Parses protocol PDF, classifies risk level
+        │
+        ├─ MINIMAL RISK          → REVIEW TRACK: EXPEDITED  (45 CFR 46.110)
+        └─ GREATER THAN MINIMAL  → REVIEW TRACK: FULL BOARD (45 CFR 46.108)
+        │
+        ▼  (single message mentions BOTH specialists — reviews run in PARALLEL)
+    ┌───────────────────────────┬───────────────────────────┐
+    │ @EthicsAgent              │ @PrivacyAgent             │
+    │ ← Featherless (DeepSeek-R1)│ ← AI/ML API (Claude 3.5)  │
+    │ Consent, Belmont, assent  │ HIPAA, BAA, retention,    │
+    │ requirements              │ de-identification         │
+    └─────────────┬─────────────┴─────────────┬─────────────┘
+                  └───────────┬───────────────┘
+                              ▼
+    @CommitteeAgent             ← Featherless AI (Llama 3.1 70B) + Band HITL
+        1. WAITS until BOTH parallel reviews land in the room
+        2. CHALLENGES @EthicsAgent: "is your top finding blocking,
+           or minor-revisable under 45 CFR 46.110(b)(2)?"
+        3. @EthicsAgent defends its determination in the room
+        4. EXPEDITED + deficiencies? → ESCALATES to FULL BOARD (46.110(b))
+        5. add_participant → pulls human @Dr.IRBChair in for binding decision
 ```
 
-All four agents communicate exclusively through Band's `@mention` routing. No agent has a direct API connection to another. The Band room conversation IS the legally required review record.
+All four agents communicate exclusively through Band's `@mention` routing. No agent has a direct API connection to another. The Band room conversation IS the legally required review record — including the agents' disagreement and its resolution.
 
 ---
 
@@ -68,55 +78,58 @@ Researcher: @ProtocolAgent Please review this research protocol.
             [uploads: IRB_Protocol_PEDI-2026-0047.pdf]
 ```
 
-### Step 2 — Protocol Analysis (Google ADK + Gemini 2.5 Pro)
-ProtocolAgent parses the PDF and extracts structured fields:
-- Study type, population, intervention
-- Risk classification (Minimal / Greater Than Minimal)
-- Consent procedures described
-- Data handling plan
+### Step 2 — Protocol Analysis + Risk-Based Routing (Google ADK + Gemini 2.5 Pro)
+ProtocolAgent parses the PDF, extracts structured fields, and **routes the review track** based on risk. Both specialists are dispatched **in parallel** — one message, two mentions:
 
 ```
 ProtocolAgent: Protocol parsed.
                Study: Phase II RCT — MetaGlyX-400 in Pediatric T2DM
                Population: VULNERABLE (minors aged 8–16)
-               Risk: GREATER THAN MINIMAL RISK → Full Board required
-               @EthicsAgent please assess consent and risk-benefit.
+               RISK: GREATER THAN MINIMAL → REVIEW TRACK: FULL BOARD (45 CFR 46.108)
+
+               Dispatching parallel specialist reviews:
+               @EthicsAgent — please assess informed consent adequacy and risk-benefit ratio.
+               @PrivacyAgent — please review data handling and HIPAA compliance.
 ```
 
-### Step 3 — Ethics Review (Featherless AI / DeepSeek-R1)
-EthicsAgent reviews against Belmont Report principles and 45 CFR 46:
-- Respect for Persons: Is informed consent adequate for minors?
-- Beneficence: Is the risk-benefit ratio justified?
-- Justice: Is participant selection equitable?
+> A MINIMAL RISK protocol would instead route to `REVIEW TRACK: EXPEDITED (45 CFR 46.110)` — eligible for designated-reviewer sign-off without convening the full board.
+
+### Step 3 — Parallel Specialist Reviews (DeepSeek-R1 ∥ Claude 3.5 Sonnet)
+Ethics and privacy reviews are independent, so they run **concurrently**. Each posts findings to the room and hands off to the Committee — in whichever order they finish:
 
 ```
-EthicsAgent: Consent review: DEFICIENCIES FOUND
-             1. Written assent form absent for participants aged 12–16.
-                Required under 45 CFR 46.408 — minors capable of
-                assent must provide written assent, not verbal only.
-             2. Long-term hepatic monitoring requirement not disclosed
-                in consent documents despite being listed in risk table.
-             @PrivacyAgent please review data handling compliance.
+EthicsAgent:  ETHICS REVIEW FINDINGS — DEFICIENCIES FOUND
+              1. Written assent form absent for ages 12–16 (45 CFR 46.408)
+              2. Hepatic monitoring not disclosed in consent (ICH E6(R2) 4.8.10)
+              @CommitteeAgent — ethics review complete.
+
+PrivacyAgent: PRIVACY REVIEW FINDINGS — CONDITIONAL PASS WITH GAPS
+              CRITICAL GAP: BioSync Research CRO data sharing has no executed
+              BAA (HIPAA 45 CFR 164.308(b)(1)).
+              @CommitteeAgent — privacy review complete.
 ```
 
-### Step 4 — Privacy Review (AI/ML API / Claude 3.5 Sonnet)
-PrivacyAgent checks data governance against HIPAA and institutional policy:
-- De-identification method
-- Third-party data sharing clauses
-- Business Associate Agreement (BAA) requirements
-- Data retention and destruction policy
+The CommitteeAgent **waits** until *both* reviews are present in the Band room before acting — if only one has landed, it holds.
+
+### Step 4 — Agent-to-Agent Challenge (Committee → Ethics)
+Before convening the human chair, the CommitteeAgent **challenges** the Ethics specialist on its most severe finding — genuine inter-agent review, not a relay:
 
 ```
-PrivacyAgent: Data review: CONDITIONAL PASS WITH GAPS
-              De-identification: Safe Harbour standard met.
-              CRITICAL GAP: Data sharing with BioSync Research CRO
-              governed by "confidentiality agreement" only.
-              Under HIPAA 45 CFR 164.308(b)(1), a Business Associate
-              Agreement is required before PHI transfer. BAA not
-              referenced or appended to this submission.
-              @CommitteeAgent: 2 ethics deficiencies + 1 privacy gap.
-              Full Board review required. Human chair sign-off needed.
+CommitteeAgent: CLARIFICATION REQUEST
+                @EthicsAgent — your most severe finding: Missing Written
+                Assent (45 CFR 46.408). Does this constitute a blocking
+                deficiency requiring full convened-board deliberation, or
+                can it be resolved through minor revisions under expedited
+                handling (45 CFR 46.110(b)(2))?
+
+EthicsAgent:    CLARIFICATION RESPONSE
+                Determination: BLOCKING. The absence of a written assent
+                process alters the consent framework for a vulnerable
+                population — not resolvable as a minor revision.
+                @CommitteeAgent — clarification provided.
 ```
+
+> If the protocol was on the EXPEDITED track and deficiencies were found, the Committee **escalates it to FULL BOARD** per 45 CFR 46.110(b) — the escalation is recorded in the room.
 
 ### Step 5 — Committee Coordination + HITL (Featherless AI / Llama 3.1 70B + Band)
 CommitteeAgent aggregates all findings. It cannot issue a determination to the researcher without human IRB chair approval — this is legally mandated, not optional. CommitteeAgent dynamically adds the IRB chair to the Band room using `add_participant_service`.
@@ -268,7 +281,7 @@ The sample protocol included in [demo/IRB_Protocol_PEDI-2026-0047.pdf](demo/IRB_
 
 **Track 3: Regulated & High-Stakes Workflows**
 
-EthicsBoard AI coordinates four distinct agents across four separate model endpoints (Claude, DeepSeek, Gemini, Llama) using the **Band** platform as a secure messaging bus. By capturing the conversation history, enforcing an authorized human-in-the-loop sign-off, and utilizing real `add_participant_service` actions, the system serves as a production-grade regulatory review record.
+EthicsBoard AI coordinates four distinct agents across four separate model endpoints (Claude, DeepSeek, Gemini, Llama) using the **Band** platform as a secure messaging bus. The workflow is genuinely non-linear: risk classification routes protocols between expedited and full-board tracks, specialist reviews run in parallel with the Committee synchronizing on both, agents challenge each other's findings before decisions are made, and expedited reviews escalate to full board when deficiencies surface. By capturing the conversation history — including inter-agent disagreement and its resolution — enforcing an authorized human-in-the-loop sign-off, and utilizing real `add_participant_service` actions, the system serves as a production-grade regulatory review record.
 
 ---
 

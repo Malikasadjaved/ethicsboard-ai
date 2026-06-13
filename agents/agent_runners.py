@@ -6,11 +6,12 @@ falling back to direct client handlers if dependencies are missing.
 """
 
 import os
+import re
 import asyncio
 import uuid
 import json
 from datetime import datetime, timezone
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 from dotenv import load_dotenv
 
 # Shared client factory
@@ -18,9 +19,14 @@ from agents.band_client import create_band_client, BandClient
 
 # Agent logic fallbacks
 from agents.protocol_agent.agent import analyze_protocol
-from agents.ethics_agent.agent import ethics_review
+from agents.ethics_agent.agent import ethics_review, ethics_clarification
 from agents.privacy_agent.agent import privacy_review
-from agents.committee_agent.agent import aggregate_findings, format_hitl_request
+from agents.committee_agent.agent import (
+    aggregate_findings,
+    format_hitl_request,
+    format_clarification_request,
+    extract_review_track,
+)
 
 load_dotenv()
 
@@ -41,30 +47,43 @@ except ImportError as e:
 active_runners: List[asyncio.Task] = []
 active_clients: Dict[str, BandClient] = {}
 
+# Committee coordination state — per-room locks and one-shot action flags so
+# concurrent ethics/privacy handoffs can't double-trigger the same step
+committee_locks: Dict[str, asyncio.Lock] = {}
+committee_actions: Dict[str, Set[str]] = {}
+
 
 # --- System Prompts for Framework Adapters ---
 
 PROTOCOL_SYSTEM_PROMPT = """You are an IRB protocol analyst. Analyze the provided research protocol and extract:
 - Study title and protocol number
-- Population (age range, vulnerable status)  
+- Population (age range, vulnerable status)
 - Risk classification (minimal or greater than minimal)
 - Consent procedures described
 - Data handling plan
 
 Format your output as a structured JSON summary.
 
-CRITICAL: Once the analysis is complete, you MUST call the `thenvoi_send_message` tool to post the summary to the room and ALWAYS mention `@ethics_agent` to hand off the review.
+ROUTING DECISION: Based on your risk classification, append exactly one of these lines after the JSON:
+- If MINIMAL RISK:            "REVIEW TRACK: EXPEDITED (45 CFR 46.110)"
+- If GREATER THAN MINIMAL:    "REVIEW TRACK: FULL BOARD (45 CFR 46.108)"
+
+CRITICAL: Once the analysis is complete, you MUST call the `thenvoi_send_message` tool to post the summary to the room and ALWAYS mention BOTH `@ethics_agent` AND `@privacy_agent` in the same message — their reviews run in parallel.
 """
 
-ETHICS_SYSTEM_PROMPT = """You are an IRB ethics specialist. Review the provided research protocol summary for:
+ETHICS_SYSTEM_PROMPT = """You are an IRB ethics specialist.
+
+IF the message contains "CLARIFICATION REQUEST": the Committee is challenging one of your findings. Reply in plain text starting with "CLARIFICATION RESPONSE", state whether the finding is BLOCKING or NON-BLOCKING per 45 CFR 46.110(b)(2), and mention `@committee_agent`.
+
+OTHERWISE review the provided research protocol summary for:
 1. Informed consent adequacy per 45 CFR 46
 2. Written assent requirements for minors (45 CFR 46.408)
 3. Risk disclosure completeness (ICH E6(R2) 4.8.10)
 4. Risk-benefit ratio justification
 
-Flag every deficiency with its regulatory citation.
+Flag every deficiency with its regulatory citation. Start your findings message with the line "ETHICS REVIEW FINDINGS".
 
-CRITICAL: Once the review is complete, you MUST call the `thenvoi_send_message` tool to post your findings to the room and ALWAYS mention `@privacy_agent` to hand off the review.
+CRITICAL: Once the review is complete, you MUST call the `thenvoi_send_message` tool to post your findings to the room and ALWAYS mention `@committee_agent` to hand off — the privacy review runs in parallel, not after you.
 """
 
 PRIVACY_SYSTEM_PROMPT = """You are a HIPAA compliance specialist. Review the provided research protocol and summary for:
@@ -74,9 +93,9 @@ PRIVACY_SYSTEM_PROMPT = """You are a HIPAA compliance specialist. Review the pro
 4. PHI access controls — who can see patient data?
 
 Use plain ASCII only. No bullet characters, em-dashes, or special symbols.
-Flag every deficiency with its regulatory citation.
+Flag every deficiency with its regulatory citation. Start your findings message with the line "PRIVACY REVIEW FINDINGS".
 
-CRITICAL: Once the review is complete, you MUST call the `thenvoi_send_message` tool to post your findings to the room and ALWAYS mention `@committee_agent` to hand off the review.
+CRITICAL: Once the review is complete, you MUST call the `thenvoi_send_message` tool to post your findings to the room and ALWAYS mention `@committee_agent` to hand off — the ethics review runs in parallel, not before you.
 """
 
 
@@ -91,27 +110,53 @@ def register_dashboard_callback(callback):
 
 # --- Lightweight Direct Handlers (Fallback/Host mode) ---
 
+def extract_risk_classification(summary: str) -> str:
+    """Classify the protocol risk level from the ProtocolAgent's JSON summary.
+
+    Defaults to GREATER_THAN_MINIMAL (the safe choice) when ambiguous.
+    """
+    s = summary.lower()
+    if "greater than minimal" in s or "greater-than-minimal" in s:
+        return "GREATER_THAN_MINIMAL"
+    if re.search(r'risk[_\s]*classification"?\s*[:=]\s*"?\s*minimal', s) or re.search(r"\bminimal risk\b", s):
+        return "MINIMAL"
+    return "GREATER_THAN_MINIMAL"
+
+
 async def handle_protocol_message(msg: dict, client: BandClient):
-    """ProtocolAgent direct handler."""
+    """ProtocolAgent direct handler — classifies risk and routes the review track."""
     text = msg.get("text", "")
     room_id = msg.get("room_id")
     sender = msg.get("sender", "").strip(" :")
-    
+
     # Process only if it looks like a new protocol or start of review, and mentions protocol_agent
     if ("PROTOCOL TEXT:" in text or "Study:" in text or len(text) > 200) and ("@protocol_agent" in text or client.agent_id in text):
         if sender == client.agent_name or sender == client.agent_id:
             return  # Skip self-posted messages
-            
-        if "All findings aggregated" in text or "IRB Decision" in text:
+
+        if "All findings aggregated" in text or "IRB Decision" in text or "CLARIFICATION" in text:
             return  # Skip coordinator/committee messages
-            
+
         print(f"[ProtocolAgent] Analyzing new protocol in room {room_id}...")
         try:
             await client.mark_processing(msg["id"], room_id)
             summary = await analyze_protocol(text)
-            
-            # Post summary and hand off to EthicsAgent
-            response_text = f"{summary}\n\n@ethics_agent — please assess informed consent adequacy and risk-benefit ratio."
+
+            # Risk-based routing: minimal risk → expedited track; otherwise full board
+            risk = extract_risk_classification(summary)
+            if risk == "MINIMAL":
+                track_line = "RISK: MINIMAL → REVIEW TRACK: EXPEDITED (45 CFR 46.110) — eligible for designated-reviewer sign-off if no deficiencies are found."
+            else:
+                track_line = "RISK: GREATER THAN MINIMAL → REVIEW TRACK: FULL BOARD (45 CFR 46.108) — convened-board determination required."
+
+            # Parallel dispatch: ethics and privacy reviews are independent, so both
+            # specialists are mentioned in one message and review concurrently.
+            response_text = (
+                f"{summary}\n\n{track_line}\n\n"
+                "Dispatching parallel specialist reviews:\n"
+                "@ethics_agent — please assess informed consent adequacy and risk-benefit ratio.\n"
+                "@privacy_agent — please review data handling and HIPAA compliance."
+            )
             await client.post_message(room_id, response_text)
             await client.mark_processed(msg["id"], room_id)
         except Exception as e:
@@ -119,25 +164,46 @@ async def handle_protocol_message(msg: dict, client: BandClient):
             await client.mark_failed(msg["id"], str(e), room_id)
 
 async def handle_ethics_message(msg: dict, client: BandClient):
-    """EthicsAgent direct handler."""
+    """EthicsAgent direct handler — full reviews plus clarification challenges."""
     text = msg.get("text", "")
     room_id = msg.get("room_id")
     sender = msg.get("sender", "").strip(" :")
-    
+
     if "@ethics_agent" in text or client.agent_id in text:
         if sender == client.agent_name or sender == client.agent_id:
             return  # Skip self-posted messages
-            
-        if "All findings aggregated" in text or "IRB Decision" in text:
+
+        # Agent-to-agent challenge: the Committee is questioning a finding
+        # (leading-line check — other messages may quote the phrase in passing)
+        if text.lstrip().startswith("CLARIFICATION REQUEST"):
+            print(f"[EthicsAgent] Answering Committee clarification challenge in room {room_id}...")
+            try:
+                await client.mark_processing(msg["id"], room_id)
+                answer = await ethics_clarification(text)
+                response_text = (
+                    f"CLARIFICATION RESPONSE\n\n{answer}\n\n"
+                    "@committee_agent — clarification provided. Proceed with your determination."
+                )
+                await client.post_message(room_id, response_text)
+                await client.mark_processed(msg["id"], room_id)
+            except Exception as e:
+                print(f"[EthicsAgent] Clarification error: {e}")
+                await client.mark_failed(msg["id"], str(e), room_id)
+            return
+
+        if "All findings aggregated" in text or "IRB Decision" in text or "CLARIFICATION RESPONSE" in text:
             return  # Skip coordinator/committee messages
-            
+
         print(f"[EthicsAgent] Conducting ethics review in room {room_id}...")
         try:
             await client.mark_processing(msg["id"], room_id)
             findings = await ethics_review(text)
-            
-            # Post findings and hand off to PrivacyAgent
-            response_text = f"{findings}\n\n@privacy_agent — please review data handling and HIPAA compliance."
+
+            # Post findings and hand off to the Committee (privacy reviews in parallel)
+            response_text = (
+                f"ETHICS REVIEW FINDINGS\n{findings}\n\n"
+                "@committee_agent — ethics review complete."
+            )
             await client.post_message(room_id, response_text)
             await client.mark_processed(msg["id"], room_id)
         except Exception as e:
@@ -145,25 +211,28 @@ async def handle_ethics_message(msg: dict, client: BandClient):
             await client.mark_failed(msg["id"], str(e), room_id)
 
 async def handle_privacy_message(msg: dict, client: BandClient):
-    """PrivacyAgent direct handler."""
+    """PrivacyAgent direct handler — runs concurrently with the ethics review."""
     text = msg.get("text", "")
     room_id = msg.get("room_id")
     sender = msg.get("sender", "").strip(" :")
-    
+
     if "@privacy_agent" in text or client.agent_id in text:
         if sender == client.agent_name or sender == client.agent_id:
             return  # Skip self-posted messages
-            
-        if "All findings aggregated" in text or "IRB Decision" in text:
+
+        if "All findings aggregated" in text or "IRB Decision" in text or "CLARIFICATION" in text:
             return  # Skip coordinator/committee messages
-            
+
         print(f"[PrivacyAgent] Conducting HIPAA privacy review in room {room_id}...")
         try:
             await client.mark_processing(msg["id"], room_id)
             findings = await privacy_review(text)
-            
+
             # Post findings and hand off to CommitteeAgent
-            response_text = f"{findings}\n\n@committee_agent — Findings available. Human chair approval needed."
+            response_text = (
+                f"PRIVACY REVIEW FINDINGS\n{findings}\n\n"
+                "@committee_agent — privacy review complete."
+            )
             await client.post_message(room_id, response_text)
             await client.mark_processed(msg["id"], room_id)
         except Exception as e:
@@ -281,39 +350,89 @@ async def handle_committee_message(msg: dict, client: BandClient):
                 print(f"[CommitteeAgent] Human message in room {room_id} did not contain a valid decision keyword ('approve', 'reject', 'revision').")
                 return
 
-        # Otherwise, this is a handoff message from another agent -> run standard aggregation
-        print(f"[CommitteeAgent] Aggregating findings in room {room_id}...")
-        try:
-            await client.mark_processing(msg["id"], room_id)
-            
-            # Get room history to extract all deficiencies
-            history = await client.get_room_history(room_id)
-            messages = [m["text"] for m in history]
-            
-            findings = await aggregate_findings(messages)
-            
-            # Extract review ID from room if possible, or protocol number
-            protocol_number = f"PEDI-2026-{room_id[-4:].upper()}" if len(room_id) > 4 else "PEDI-2026-0047"
-            
-            # Add Dr. IRB Chair to the room
-            chair_user_id = os.getenv("BAND_IRB_CHAIR_USER_ID", "irb-chair-user")
-            
-            hitl_request = await format_hitl_request(findings, protocol_number)
-            
-            # Post HITL request and add chair
-            await client.post_message(room_id, hitl_request)
+        # Otherwise, this is a handoff message from another agent → run the
+        # coordination state machine:
+        #   1. Wait until BOTH parallel specialist reviews (ethics + privacy) are in
+        #   2. Challenge EthicsAgent on its most severe finding (agent-to-agent review)
+        #   3. After the clarification response, aggregate and convene the human chair
+        lock = committee_locks.setdefault(room_id, asyncio.Lock())
+        async with lock:
             try:
-                import re
-                if chair_user_id and re.match(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$', chair_user_id):
-                    await client.add_participant(room_id, chair_user_id, f"Dr. IRB Chair added to review room.")
-                else:
-                    print(f"[CommitteeAgent] Warning: BAND_IRB_CHAIR_USER_ID is not a valid UUID: '{chair_user_id}'. Skipping add_participant.")
-            except Exception as participant_err:
-                print(f"[CommitteeAgent] Warning: Failed to add Dr. IRB Chair: {participant_err}")
-            await client.mark_processed(msg["id"], room_id)
-        except Exception as e:
-            print(f"[CommitteeAgent] Error: {e}")
-            await client.mark_failed(msg["id"], str(e), room_id)
+                await client.mark_processing(msg["id"], room_id)
+
+                # Get room history to determine pipeline state (include the
+                # triggering message — history may not contain it yet)
+                history = await client.get_room_history(room_id)
+                messages = [m["text"] for m in history]
+                if text not in messages:
+                    messages.append(text)
+
+                actions = committee_actions.setdefault(room_id, set())
+                has_ethics = any("ETHICS REVIEW FINDINGS" in t for t in messages)
+                has_privacy = any("PRIVACY REVIEW FINDINGS" in t for t in messages)
+                # Leading-line checks: the REQUEST body contains the literal
+                # phrase "CLARIFICATION RESPONSE", so substring matching would
+                # let the committee convene the chair before ethics answers
+                asked_clarification = "clarification_requested" in actions or any(
+                    t.lstrip().startswith("CLARIFICATION REQUEST") for t in messages)
+                has_clarification_resp = any(
+                    t.lstrip().startswith("CLARIFICATION RESPONSE") for t in messages)
+                hitl_posted = "hitl_posted" in actions or any(
+                    "All findings aggregated" in t for t in messages)
+
+                if hitl_posted:
+                    await client.mark_processed(msg["id"], room_id)
+                    return
+
+                # Step 1 — both parallel reviews must be complete before proceeding
+                if not (has_ethics and has_privacy):
+                    waiting_for = "privacy" if has_ethics else ("ethics" if has_privacy else "ethics + privacy")
+                    print(f"[CommitteeAgent] Waiting for parallel reviews in room {room_id} (missing: {waiting_for}).")
+                    await client.mark_processed(msg["id"], room_id)
+                    return
+
+                # Step 2 — challenge EthicsAgent once before convening the chair
+                if not asked_clarification:
+                    print(f"[CommitteeAgent] Both reviews in. Challenging EthicsAgent in room {room_id}...")
+                    findings = await aggregate_findings(messages)
+                    clarification = format_clarification_request(findings)
+                    actions.add("clarification_requested")
+                    await client.post_message(room_id, clarification)
+                    await client.mark_processed(msg["id"], room_id)
+                    return
+
+                if not has_clarification_resp:
+                    print(f"[CommitteeAgent] Awaiting EthicsAgent clarification response in room {room_id}.")
+                    await client.mark_processed(msg["id"], room_id)
+                    return
+
+                # Step 3 — aggregate everything and convene the human IRB Chair
+                print(f"[CommitteeAgent] Clarification received. Aggregating findings in room {room_id}...")
+                findings = await aggregate_findings(messages)
+                review_track = extract_review_track(messages)
+
+                # Extract review ID from room if possible, or protocol number
+                protocol_number = f"PEDI-2026-{room_id[-4:].upper()}" if len(room_id) > 4 else "PEDI-2026-0047"
+
+                # Add Dr. IRB Chair to the room
+                chair_user_id = os.getenv("BAND_IRB_CHAIR_USER_ID", "irb-chair-user")
+
+                hitl_request = await format_hitl_request(findings, protocol_number, review_track)
+                actions.add("hitl_posted")
+
+                # Post HITL request and add chair
+                await client.post_message(room_id, hitl_request)
+                try:
+                    if chair_user_id and re.match(r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$', chair_user_id):
+                        await client.add_participant(room_id, chair_user_id, f"Dr. IRB Chair added to review room.")
+                    else:
+                        print(f"[CommitteeAgent] Warning: BAND_IRB_CHAIR_USER_ID is not a valid UUID: '{chair_user_id}'. Skipping add_participant.")
+                except Exception as participant_err:
+                    print(f"[CommitteeAgent] Warning: Failed to add Dr. IRB Chair: {participant_err}")
+                await client.mark_processed(msg["id"], room_id)
+            except Exception as e:
+                print(f"[CommitteeAgent] Error: {e}")
+                await client.mark_failed(msg["id"], str(e), room_id)
 
 
 # --- Global message tracker for dashboard WS forwarding ---
@@ -338,11 +457,27 @@ async def global_message_tracker(msg: dict, agent_name: str):
         resolved_agent = sender
         if sender in handles_map:
             resolved_agent = handles_map[sender]
-            
+
         agent_key = resolved_agent.lower().replace(" ", "_")
-        
+
+        # Message-content markers are authoritative — sender resolution can race
+        # in fallback mode where all four clients forward every room message.
+        # Clarification markers checked by leading line: the REQUEST body
+        # contains the literal phrase "CLARIFICATION RESPONSE".
+        content_text = msg.get("text", "")
+        content_stripped = content_text.lstrip()
+        if content_stripped.startswith("CLARIFICATION REQUEST"):
+            agent_key = "committee_agent"
+        elif content_stripped.startswith("CLARIFICATION RESPONSE") or "ETHICS REVIEW FINDINGS" in content_text:
+            agent_key = "ethics_agent"
+        elif "PRIVACY REVIEW FINDINGS" in content_text:
+            agent_key = "privacy_agent"
+        elif "All findings aggregated" in content_text or "IRB Chair decision" in content_text:
+            agent_key = "committee_agent"
+        elif "REVIEW TRACK:" in content_text or "risk_classification" in content_text:
+            agent_key = "protocol_agent"
         # Fall back to parameter agent_name if sender is not one of our agents
-        if agent_key not in ["protocol_agent", "ethics_agent", "privacy_agent", "committee_agent"]:
+        elif agent_key not in ["protocol_agent", "ethics_agent", "privacy_agent", "committee_agent"]:
             agent_key = agent_name.lower().replace(" ", "_") if agent_name else "committee_agent"
             
         framework = "LangGraph" if agent_key == "protocol_agent" else (
@@ -389,7 +524,7 @@ async def start_all_agents():
         # 1. Wire ProtocolAgent via LangGraphAdapter
         try:
             llm = ChatOpenAI(
-                model=os.getenv("GEMINI_MODEL", "google/gemini-2.5-pro"),
+                model=os.getenv("GEMINI_MODEL", "gemini-2.5-pro"),
                 api_key=os.getenv("AIML_API_KEY"),
                 base_url=os.getenv("AIML_BASE_URL", "https://api.aimlapi.com/v1"),
             )

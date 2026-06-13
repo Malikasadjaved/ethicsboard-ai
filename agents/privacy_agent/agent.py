@@ -60,7 +60,7 @@ async def privacy_review(protocol_text: str) -> str:
                 {"role": "system", "content": PRIVACY_SYSTEM_PROMPT},
                 {"role": "user", "content": f"Protocol text:\n{protocol_text}"}
             ],
-            timeout=15.0,
+            timeout=45.0,
             max_retries=3
         )
         return clean_json_response(response.choices[0].message.content)
@@ -70,12 +70,12 @@ async def privacy_review(protocol_text: str) -> str:
         try:
             response = await call_llm_with_retry(
                 client=client,
-                model="google/gemini-2.5-pro",
+                model="gemini-2.5-pro",
                 messages=[
                     {"role": "system", "content": PRIVACY_SYSTEM_PROMPT},
                     {"role": "user", "content": f"Protocol text:\n{protocol_text}"}
                 ],
-                timeout=15.0,
+                timeout=45.0,
                 max_retries=3
             )
             return clean_json_response(response.choices[0].message.content)

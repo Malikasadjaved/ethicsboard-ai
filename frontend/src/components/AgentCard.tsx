@@ -27,41 +27,27 @@ export default function AgentCard({ name, framework, model, provider, status, ic
     setMounted(true);
   }, []);
 
+  // Visual treatment (border/background/glow) is applied via inline styles
+  // below — only static classes live here
   const statusConfig = {
     idle: {
-      border: 'border-slate-700/50',
-      bg: 'bg-slate-900/30',
-      glow: '',
       label: 'Standby',
       labelColor: 'text-slate-500',
-      dotColor: 'bg-slate-600',
       opacity: 'opacity-60',
     },
     active: {
-      border: `border-[${color}]/50`,
-      bg: 'bg-[#111128]/60',
-      glow: `shadow-[0_0_30px_-5px_${color}40]`,
       label: 'Analyzing...',
       labelColor: 'text-white',
-      dotColor: `bg-[${color}]`,
       opacity: 'opacity-100',
     },
     complete: {
-      border: 'border-emerald-500/30',
-      bg: 'bg-emerald-950/20',
-      glow: 'shadow-[0_0_20px_-5px_rgba(16,185,129,0.2)]',
       label: 'Complete',
       labelColor: 'text-emerald-400',
-      dotColor: 'bg-emerald-400',
       opacity: 'opacity-100',
     },
     error: {
-      border: 'border-red-500/40',
-      bg: 'bg-red-950/20',
-      glow: 'shadow-[0_0_20px_-5px_rgba(239,68,68,0.3)]',
       label: 'Error',
       labelColor: 'text-red-400',
-      dotColor: 'bg-red-400',
       opacity: 'opacity-100',
     },
   };
