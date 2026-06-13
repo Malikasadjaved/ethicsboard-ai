@@ -9,6 +9,7 @@ import json
 import uuid
 import os
 import sys
+import re
 from datetime import datetime, timezone
 
 # Add project root to sys.path so we can import agents
@@ -54,6 +55,8 @@ class ReviewSession(BaseModel):
 
 reviews: Dict[str, ReviewSession] = {}
 websocket_connections: Dict[str, List[WebSocket]] = {}
+room_to_review: Dict[str, str] = {}
+active_subscription_tasks: Dict[str, asyncio.Task] = {}
 
 
 # --- WebSocket Manager ---
@@ -96,16 +99,19 @@ async def lifespan(app: FastAPI):
     # Register dashboard WebSocket forwarder
     async def dashboard_forwarder(dash_msg):
         room_id = dash_msg.get("room_id")
-        review_id = None
-        for r_id, session in reviews.items():
-            if session.band_room_id == room_id:
-                review_id = r_id
-                break
+        review_id = room_to_review.get(room_id)
+        if not review_id and room_id:
+            for r_id, session in reviews.items():
+                if session.band_room_id == room_id:
+                    review_id = r_id
+                    room_to_review[room_id] = r_id
+                    break
         
         if review_id:
             content = dash_msg.get("content", "")
             agent = dash_msg.get("agent")
             deficiencies = extract_deficiencies_from_text(agent, content)
+            display_content = extract_analysis_from_text(content)
             
             session = reviews[review_id]
             
@@ -117,7 +123,7 @@ async def lifespan(app: FastAPI):
                 agent=agent,
                 framework=dash_msg.get("framework"),
                 model_provider=dash_msg.get("model_provider"),
-                content=content,
+                content=display_content,
                 message_type=dash_msg.get("message_type"),
                 deficiencies=deficiencies if deficiencies else None
             )
@@ -159,6 +165,10 @@ async def lifespan(app: FastAPI):
     
     yield
     print("EthicsBoard AI API Server shutting down...")
+    # Cancel all active subscription tasks on shutdown
+    for t in active_subscription_tasks.values():
+        t.cancel()
+    active_subscription_tasks.clear()
     await stop_all_agents()
 
 
@@ -233,6 +243,12 @@ async def submit_decision(review_id: str, decision: dict):
     session.determination = choice
     session.status = "completed"
     
+    # Cancel room subscription task if active
+    task = active_subscription_tasks.pop(review_id, None)
+    if task:
+        task.cancel()
+        print(f"[Backend] Cancelled active Band room subscription task for review {review_id}")
+    
     # Generate determination letter
     msg = ReviewMessage(
         id=str(uuid.uuid4())[:8],
@@ -273,7 +289,53 @@ async def websocket_endpoint(websocket: WebSocket, review_id: str):
 
 # --- Deficiency Extraction Helper ---
 
+def extract_analysis_from_text(text: str) -> str:
+    try:
+        clean_text = text.strip()
+        matches = list(re.finditer(r"```(?:json)?\s*(.*?)\s*```", clean_text, flags=re.DOTALL))
+        if matches:
+            clean_text = matches[-1].group(1).strip()
+        
+        # Strip DeepSeek thinking process if present
+        clean_text = re.sub(r"<think>.*?</think>", "", clean_text, flags=re.DOTALL).strip()
+        
+        data = json.loads(clean_text)
+        if isinstance(data, dict) and "analysis" in data:
+            return data["analysis"]
+    except Exception:
+        pass
+    return text
+
+
 def extract_deficiencies_from_text(agent_name: str, text: str) -> List[dict]:
+    # 1. Try parsing text as structured JSON first
+    try:
+        clean_text = text.strip()
+        matches = list(re.finditer(r"```(?:json)?\s*(.*?)\s*```", clean_text, flags=re.DOTALL))
+        if matches:
+            clean_text = matches[-1].group(1).strip()
+        
+        # Strip DeepSeek thinking process if present
+        clean_text = re.sub(r"<think>.*?</think>", "", clean_text, flags=re.DOTALL).strip()
+        
+        data = json.loads(clean_text)
+        if isinstance(data, dict) and "deficiencies" in data:
+            raw_defs = data["deficiencies"]
+            structured_defs = []
+            for item in raw_defs:
+                if isinstance(item, dict):
+                    structured_defs.append({
+                        "id": item.get("id", int(uuid.uuid4().int % 100000)),
+                        "title": item.get("title", "Compliance Issue"),
+                        "severity": item.get("severity", "major"),
+                        "regulation": item.get("regulation", "Unknown Regulation"),
+                        "description": item.get("description", "")
+                    })
+            return structured_defs
+    except Exception:
+        # Not JSON or failed to parse; fallback to keyword extraction below
+        pass
+
     deficiencies = []
     text_lower = text.lower()
     
@@ -349,11 +411,13 @@ def resolve_agent_name(sender_id: str) -> str:
 async def subscribe_to_band_room(room_id: str, ws_manager: ConnectionManager):
     """Bridge real Band room events to the frontend WebSocket."""
     # Lookup review_id associated with this room
-    review_id = None
-    for r_id, session in reviews.items():
-        if session.band_room_id == room_id:
-            review_id = r_id
-            break
+    review_id = room_to_review.get(room_id)
+    if not review_id:
+        for r_id, session in reviews.items():
+            if session.band_room_id == room_id:
+                review_id = r_id
+                room_to_review[room_id] = r_id
+                break
             
     # Resolve the active client to subscribe to the room
     from agents.agent_runners import active_clients
@@ -369,11 +433,12 @@ async def subscribe_to_band_room(room_id: str, ws_manager: ConnectionManager):
             async for message in stream:
                 # 1. User's exact requested bridge broadcast pattern
                 sender_name = resolve_agent_name(message.sender_id)
+                display_content = extract_analysis_from_text(message.content)
                 if review_id:
                     try:
                         await ws_manager.broadcast(review_id, {
                             "sender": sender_name,
-                            "content": message.content,
+                            "content": display_content,
                             "timestamp": message.timestamp
                         })
                     except Exception as e:
@@ -406,7 +471,7 @@ async def subscribe_to_band_room(room_id: str, ws_manager: ConnectionManager):
                         agent=agent_title,
                         framework=framework,
                         model_provider=provider,
-                        content=message.content,
+                        content=display_content,
                         message_type=msg_type,
                         deficiencies=deficiencies if deficiencies else None
                     )
@@ -466,9 +531,11 @@ async def run_real_pipeline(review_id: str, file_path: str):
     try:
         room_id = await committee_client.create_room(room_name)
         session.band_room_id = room_id
+        room_to_review[room_id] = review_id
         
         # Subscribe to room messages and bridge them to the frontend
-        asyncio.create_task(subscribe_to_band_room(room_id, manager))
+        task = asyncio.create_task(subscribe_to_band_room(room_id, manager))
+        active_subscription_tasks[review_id] = task
         
         # Update status
         session.status = "protocol_review"
@@ -532,6 +599,7 @@ async def run_mock_pipeline(review_id: str, file_path: str):
     
     ethics_result = await ethics_review(protocol_summary)
     ethics_defs = extract_deficiencies_from_text("EthicsAgent", ethics_result)
+    ethics_analysis = extract_analysis_from_text(ethics_result)
     session.deficiency_count += len(ethics_defs)
     
     msg2 = ReviewMessage(
@@ -540,7 +608,7 @@ async def run_mock_pipeline(review_id: str, file_path: str):
         agent="EthicsAgent",
         framework="Pydantic AI",
         model_provider="Featherless AI (DeepSeek-R1)",
-        content=f"{ethics_result}\n\n@PrivacyAgent — please review data handling and HIPAA compliance.",
+        content=f"{ethics_analysis}\n\n@PrivacyAgent — please review data handling and HIPAA compliance.",
         message_type="finding",
         deficiencies=ethics_defs
     )
@@ -553,6 +621,7 @@ async def run_mock_pipeline(review_id: str, file_path: str):
     
     privacy_result = await privacy_review(pdf_text)
     privacy_defs = extract_deficiencies_from_text("PrivacyAgent", privacy_result)
+    privacy_analysis = extract_analysis_from_text(privacy_result)
     session.deficiency_count += len(privacy_defs)
     
     msg3 = ReviewMessage(
@@ -561,7 +630,7 @@ async def run_mock_pipeline(review_id: str, file_path: str):
         agent="PrivacyAgent",
         framework="CrewAI",
         model_provider="AI/ML API (Claude Sonnet)",
-        content=f"{privacy_result}\n\n@CommitteeAgent — Findings available. Human chair approval needed.",
+        content=f"{privacy_analysis}\n\n@CommitteeAgent — Findings available. Human chair approval needed.",
         message_type="finding",
         deficiencies=privacy_defs
     )
@@ -589,4 +658,5 @@ async def run_mock_pipeline(review_id: str, file_path: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    port = int(os.getenv("API_PORT", "8008"))
+    uvicorn.run(app, host="0.0.0.0", port=port)

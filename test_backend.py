@@ -4,8 +4,8 @@ import websockets
 import json
 import os
 
-backend_url = "http://localhost:8000"
-ws_url = "ws://localhost:8000"
+backend_url = "http://localhost:8008"
+ws_url = "ws://localhost:8008"
 
 async def test_full_flow():
     # 1. Read sample protocol

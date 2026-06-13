@@ -81,7 +81,7 @@ const AGENTS = [
 ];
 
 // --- API URL ---
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8008";
 
 export default function Dashboard() {
   const [status, setStatus] = useState<ReviewStatus>("idle");

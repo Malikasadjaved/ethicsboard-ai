@@ -19,8 +19,16 @@ python-dotenv>=1.0.0
 band-sdk>=0.2.11
 
 # Agent Frameworks
-# langgraph>=0.1.0
-# langchain-openai>=0.1.0
-# pydantic-ai>=0.0.14
-# crewai>=0.1.0
+langgraph
+langchain-openai
+pydantic-ai-slim[openai]
+crewai
+litellm
+opentelemetry-api==1.34.1
+opentelemetry-sdk==1.34.1
+opentelemetry-exporter-otlp-proto-common==1.34.1
+opentelemetry-exporter-otlp-proto-grpc==1.34.1
+opentelemetry-exporter-otlp-proto-http==1.34.1
+opentelemetry-proto==1.34.1
+nest_asyncio>=1.6.0
 

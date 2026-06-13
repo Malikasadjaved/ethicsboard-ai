@@ -4,11 +4,14 @@ WORKDIR /app
 
 # No build dependencies needed since python packages have precompiled wheels
 
+# Copy uv from the official image
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /uvx /bin/
+
 # Copy requirements from root context
 COPY requirements.txt .
 
-# Install dependencies with increased timeout for network robustness
-RUN pip install --no-cache-dir --default-timeout=100 -r requirements.txt
+# Install dependencies using uv for extremely fast and reliable resolution
+RUN uv pip install --system -r requirements.txt
 
 # Copy the entire workspace
 COPY . .
@@ -18,7 +21,7 @@ ENV PYTHONPATH=/app
 ENV PYTHONUNBUFFERED=1
 
 # Expose backend port
-EXPOSE 8000
+EXPOSE 8008
 
 # Run the backend server
 CMD ["python", "backend/server.py"]

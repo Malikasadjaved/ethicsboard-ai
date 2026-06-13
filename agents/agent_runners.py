@@ -30,7 +30,7 @@ try:
     from thenvoi.adapters.pydantic_ai import PydanticAIAdapter
     from thenvoi.adapters.crewai import CrewAIAdapter
     from langchain_openai import ChatOpenAI
-    from langgraph.checkpoint.memory import InMemorySaver
+    from langgraph.checkpoint.memory import MemorySaver
     from pydantic_ai.models.openai import OpenAIModel
     HAS_ADAPTERS = True
 except ImportError as e:
@@ -190,10 +190,15 @@ async def handle_committee_message(msg: dict, client: BandClient):
     is_decision_keyword = any(kw in text.lower() for kw in ["approve", "reject", "revision", "revisions"])
     is_irb_decision = "irb decision" in text.lower()
     
-    if is_irb_decision and is_decision_keyword:
-        is_human_sender = True
-    else:
-        is_human_sender = sender not in agents_ids
+    chair_id = os.getenv("BAND_IRB_CHAIR_USER_ID", "irb-chair-user")
+    TEST_MODE = os.getenv("TEST_MODE", "false").lower() == "true"
+    is_human_sender = (sender == chair_id) or (
+        TEST_MODE and (
+            sender == "irb_chair_test" or 
+            sender == "dummy-human-irb-chair-id" or 
+            ((is_irb_decision and is_decision_keyword) and (sender in agents_ids))
+        )
+    )
     
     # Process if explicitly mentioned or if it is a human sender in the room
     if "@committee_agent" in text or client.agent_id in text or is_human_sender:
@@ -390,10 +395,9 @@ async def start_all_agents():
             )
             protocol_adapter = LangGraphAdapter(
                 llm=llm,
-                checkpointer=InMemorySaver(),
+                checkpointer=MemorySaver(),
                 custom_section=PROTOCOL_SYSTEM_PROMPT,
             )
-            # Create client
             client_p = create_band_client("protocol_agent")
             from thenvoi import Agent
             agent_p = Agent.create(
@@ -404,16 +408,20 @@ async def start_all_agents():
                 rest_url=os.getenv("THENVOI_REST_URL", "https://app.band.ai"),
             )
             active_runners.append(asyncio.create_task(agent_p.start()))
-            print("[Agent Runners] ProtocolAgent wired via LangGraphAdapter.")
+            print("INFO: LangGraphAdapter initialized for ProtocolAgent")
         except Exception as e:
             print(f"[Agent Runners] Failed to wire ProtocolAgent: {e}")
 
         # 2. Wire EthicsAgent via PydanticAIAdapter
         try:
+            from pydantic_ai.providers.openai import OpenAIProvider
+            provider = OpenAIProvider(
+                api_key=os.getenv("FEATHERLESS_API_KEY"),
+                base_url=os.getenv("FEATHERLESS_BASE_URL", "https://api.featherless.ai/v1")
+            )
             model = OpenAIModel(
                 model_name="deepseek-ai/DeepSeek-R1-Distill-Llama-70B",
-                api_key=os.getenv("FEATHERLESS_API_KEY"),
-                base_url=os.getenv("FEATHERLESS_BASE_URL", "https://api.featherless.ai/v1"),
+                provider=provider
             )
             ethics_adapter = PydanticAIAdapter(
                 model=model,
@@ -429,7 +437,7 @@ async def start_all_agents():
                 rest_url=os.getenv("THENVOI_REST_URL", "https://app.band.ai"),
             )
             active_runners.append(asyncio.create_task(agent_e.start()))
-            print("[Agent Runners] EthicsAgent wired via PydanticAIAdapter.")
+            print("INFO: PydanticAIAdapter initialized for EthicsAgent")
         except Exception as e:
             print(f"[Agent Runners] Failed to wire EthicsAgent: {e}")
 
@@ -455,7 +463,7 @@ async def start_all_agents():
                 rest_url=os.getenv("THENVOI_REST_URL", "https://app.band.ai"),
             )
             active_runners.append(asyncio.create_task(agent_pr.start()))
-            print("[Agent Runners] PrivacyAgent wired via CrewAIAdapter.")
+            print("INFO: CrewAIAdapter initialized for PrivacyAgent")
         except Exception as e:
             print(f"[Agent Runners] Failed to wire PrivacyAgent: {e}")
 
