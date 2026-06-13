@@ -18,3 +18,9 @@ python-dotenv>=1.0.0
 # Band Platform
 band-sdk>=0.2.11
 
+# Agent Frameworks
+langgraph>=0.1.0
+langchain-openai>=0.1.0
+pydantic-ai>=0.0.14
+crewai>=0.1.0
+

@@ -21,6 +21,9 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, H
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
+# Import agent runners
+from agents.agent_runners import start_all_agents, stop_all_agents, register_dashboard_callback
+
 
 # --- Models ---
 
@@ -89,8 +92,71 @@ manager = ConnectionManager()
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("EthicsBoard AI API Server starting...")
+    
+    # Register dashboard WebSocket forwarder
+    async def dashboard_forwarder(dash_msg):
+        room_id = dash_msg.get("room_id")
+        review_id = None
+        for r_id, session in reviews.items():
+            if session.band_room_id == room_id:
+                review_id = r_id
+                break
+        
+        if review_id:
+            content = dash_msg.get("content", "")
+            agent = dash_msg.get("agent")
+            deficiencies = extract_deficiencies_from_text(agent, content)
+            
+            session = reviews[review_id]
+            
+            # Map ReviewMessage fields
+            from backend.server import ReviewMessage
+            msg = ReviewMessage(
+                id=dash_msg.get("id"),
+                timestamp=dash_msg.get("timestamp"),
+                agent=agent,
+                framework=dash_msg.get("framework"),
+                model_provider=dash_msg.get("model_provider"),
+                content=content,
+                message_type=dash_msg.get("message_type"),
+                deficiencies=deficiencies if deficiencies else None
+            )
+            
+            # Append if not already present
+            if not any(m.id == msg.id for m in session.messages):
+                session.messages.append(msg)
+                if deficiencies:
+                    session.deficiency_count += len(deficiencies)
+                
+                # Broadcast the message
+                await manager.broadcast(review_id, {
+                    "type": "message",
+                    "data": msg.model_dump()
+                })
+                
+                # Update dashboard status indicators based on active agent
+                next_status = "ethics_review" if agent == "ProtocolAgent" else (
+                    "privacy_review" if agent == "EthicsAgent" else (
+                        "committee_review" if agent == "PrivacyAgent" else (
+                            "awaiting_chair" if (agent == "CommitteeAgent" and "Please analyze" not in content) else session.status
+                        )
+                    )
+                )
+                if next_status != session.status:
+                    session.status = next_status
+                    await manager.broadcast(review_id, {
+                        "type": "status_update",
+                        "data": {"status": next_status}
+                    })
+
+    register_dashboard_callback(dashboard_forwarder)
+    
+    # Start agents listening loops
+    asyncio.create_task(start_all_agents())
+    
     yield
     print("EthicsBoard AI API Server shutting down...")
+    await stop_all_agents()
 
 
 app = FastAPI(
@@ -132,7 +198,7 @@ async def start_review(file: UploadFile = File(...)):
         f.write(content)
     
     # Trigger the agent pipeline
-    asyncio.create_task(run_mock_pipeline(review_id, file_path))
+    asyncio.create_task(run_real_pipeline(review_id, file_path))
     
     return {"review_id": review_id, "protocol_number": protocol_number, "status": "started"}
 
@@ -258,6 +324,52 @@ def extract_deficiencies_from_text(agent_name: str, text: str) -> List[dict]:
             })
             
     return deficiencies
+
+
+# --- Real Pipeline using Band room and WebSocket event routing ---
+
+async def run_real_pipeline(review_id: str, file_path: str):
+    """Orchestrate the real multi-agent pipeline via the Band room."""
+    from agents.protocol_agent.agent import extract_pdf_text
+    from agents.band_client import create_band_client
+    from thenvoi.config.loader import load_agent_config
+    
+    session = reviews[review_id]
+    session.deficiency_count = 0
+    
+    # Extract PDF
+    pdf_text = extract_pdf_text(file_path)
+    
+    # 1. Create a real Band room using the committee_agent client
+    print(f"[Backend] Creating real Band room for review {review_id}...")
+    committee_client = create_band_client("committee_agent")
+    
+    room_name = f"EthicsBoard-IRB-Review-{review_id}"
+    try:
+        room_id = await committee_client.create_room(room_name)
+        session.band_room_id = room_id
+        
+        # Update status
+        session.status = "protocol_review"
+        await manager.broadcast(review_id, {"type": "status_update", "data": {"status": "protocol_review"}})
+        
+        # 2. Add other agents as participants (Protocol, Ethics, Privacy)
+        for agent_name in ["protocol_agent", "ethics_agent", "privacy_agent"]:
+            try:
+                agent_id, _ = load_agent_config(agent_name)
+                await committee_client.add_participant(room_id, agent_id)
+            except Exception as e:
+                print(f"[Backend] Warning: could not add {agent_name} to room: {e}")
+                
+        # 3. Post the initial protocol text, mentioning @protocol_agent to trigger it
+        initial_text = f"@protocol_agent — Please analyze this research protocol:\n\n{pdf_text}"
+        await committee_client.post_message(room_id, initial_text)
+        print(f"[Backend] Initial protocol text posted by CommitteeAgent to room {room_id}. Pipeline started.")
+        
+    except Exception as e:
+        print(f"[Backend] Error starting real pipeline: {e}. Falling back to mock pipeline.")
+        asyncio.create_task(run_mock_pipeline(review_id, file_path))
+        asyncio.create_task(run_mock_pipeline(review_id, file_path))
 
 
 # --- Mock Pipeline (replaced with real Band integration on Day 1) ---

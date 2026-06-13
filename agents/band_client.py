@@ -39,12 +39,15 @@ class BandClientAdapter(SimpleAdapter[list]):
         room_id,
     ) -> None:
         # Convert platform message to matching dictionary format
+        created_at = getattr(msg, "created_at", None)
         mapped_msg = {
             "id": msg.id,
             "room_id": room_id,
             "sender": msg.sender_name or msg.sender_id,
             "text": msg.content,
-            "timestamp": msg.inserted_at.isoformat() if msg.inserted_at else datetime.now(timezone.utc).isoformat(),
+            "timestamp": created_at.isoformat() if created_at and hasattr(created_at, "isoformat") else (
+                created_at if isinstance(created_at, str) else datetime.now(timezone.utc).isoformat()
+            ),
         }
         for handler in self.client.message_handlers:
             try:
@@ -83,10 +86,10 @@ class BandClient:
         from thenvoi_rest import ChatRoomRequest
         try:
             resp = await self.rest_client.agent_api_chats.create_agent_chat(
-                chat=ChatRoomRequest(task_id=room_name)
+                chat=ChatRoomRequest()
             )
             room_id = resp.data.id
-            print(f"[Band Client] Room created: {room_name} ({room_id})")
+            print(f"[Band Client] Room created for name {room_name}: ({room_id})")
             return room_id
         except Exception as e:
             print(f"[Band Client] Error creating room {room_name}: {e}")
@@ -101,10 +104,48 @@ class BandClient:
     
     async def post_message(self, room_id: str, text: str) -> dict:
         """Post a message to a Band room."""
+        import re
+        from thenvoi_rest import ChatMessageRequestMentionsItem
         try:
+            # Resolve mentions from text
+            mentions_items = []
+            
+            # Map handles to IDs
+            from thenvoi.config.loader import load_agent_config
+            handles_map = {}
+            for handle in ["protocol_agent", "ethics_agent", "privacy_agent", "committee_agent"]:
+                try:
+                    aid, _ = load_agent_config(handle)
+                    handles_map[handle] = aid
+                except Exception:
+                    pass
+            
+            # Extract mentions from text
+            found_handles = re.findall(r"@([a-zA-Z0-9_\-]+)", text)
+            for h in found_handles:
+                # If it's a known agent handle
+                if h in handles_map:
+                    mentions_items.append(ChatMessageRequestMentionsItem(id=handles_map[h], handle=h))
+                elif h in ["Dr.IRBChair", "Dr. IRB Chair", "Dr.IRB Chair"]:
+                    # IRB chair user id
+                    chair_id = os.getenv("BAND_IRB_CHAIR_USER_ID", "irb-chair-user")
+                    mentions_items.append(ChatMessageRequestMentionsItem(id=chair_id, handle=h))
+            
+            # If no mentions were found, mention the next logical agent in the chain to avoid cannot_mention_self
+            if not mentions_items:
+                next_agent_map = {
+                    "protocol_agent": "ethics_agent",
+                    "ethics_agent": "privacy_agent",
+                    "privacy_agent": "committee_agent",
+                    "committee_agent": "protocol_agent",
+                }
+                target_handle = next_agent_map.get(self.agent_name, "protocol_agent")
+                target_id = handles_map.get(target_handle, self.agent_id)
+                mentions_items.append(ChatMessageRequestMentionsItem(id=target_id, handle=target_handle))
+                
             resp = await self.rest_client.agent_api_messages.create_agent_chat_message(
                 chat_id=room_id,
-                message=ChatMessageRequest(content=text, mentions=[])
+                message=ChatMessageRequest(content=text, mentions=mentions_items)
             )
             message = {
                 "id": resp.data.id,
