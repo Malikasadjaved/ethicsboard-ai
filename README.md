@@ -38,9 +38,9 @@ EthicsBoard AI is an automated Institutional Review Board (IRB) review pipeline 
 ## 🚀 Key Features
 
 * **4 Specialist Agents**:
-  1. **@ProtocolAgent** (Gemini 2.5 Pro via Google AI SDK) — Parses protocol PDFs and extracts structured metadata.
+  1. **@ProtocolAgent** (Gemini 2.5 Pro via AI/ML API) — Parses protocol PDFs and extracts structured metadata.
   2. **@EthicsAgent** (DeepSeek-R1 via Featherless AI) — Evaluates ethical compliance (assent, disclosures, consent forms).
-  3. **@PrivacyAgent** (Claude 3.5 Sonnet via AI/ML API) — Assesses HIPAA data governance, access controls, and retention.
+  3. **@PrivacyAgent** (Claude Sonnet 4.6 via AI/ML API) — Assesses HIPAA data governance, access controls, and retention.
   4. **@CommitteeAgent** (Llama 3.1 70B via Featherless AI) — Aggregates findings and acts as the Human-in-the-Loop (HITL) coordinator.
 * **Band as the Audit Ledger**: The agents share no direct APIs. All handoffs, analyses, and messages happen via `@mention` routing in a single, secure Band room. The room history is the immutable, legally mandated audit ledger. Unlike a traditional dashboard log, this history is owned by the Band platform — tamper-evident, sequential, and accessible to all review participants including the IRB Chair.
 * **Risk-Based Review Routing**: ProtocolAgent's risk classification routes the workflow — MINIMAL RISK protocols enter the **EXPEDITED track** (45 CFR 46.110, designated-reviewer sign-off), while GREATER THAN MINIMAL protocols require **FULL BOARD review** (45 CFR 46.108). If specialists find deficiencies on an expedited protocol, the Committee **escalates it to full board** per 45 CFR 46.110(b).
@@ -70,7 +70,7 @@ Researcher
     ▼
 Band Chat Room: "IRB Review — Protocol #IRB-PEDI-2026-0047"
     │
-    @ProtocolAgent              ← Google ADK + Gemini 2.5 Pro
+    @ProtocolAgent              ← LangGraph + Gemini 2.5 Pro (AI/ML API)
         Parses protocol PDF, classifies risk level
         │
         ├─ MINIMAL RISK          → REVIEW TRACK: EXPEDITED  (45 CFR 46.110)
@@ -79,7 +79,7 @@ Band Chat Room: "IRB Review — Protocol #IRB-PEDI-2026-0047"
         ▼  (single message mentions BOTH specialists — reviews run in PARALLEL)
     ┌───────────────────────────┬───────────────────────────┐
     │ @EthicsAgent              │ @PrivacyAgent             │
-    │ ← Featherless (DeepSeek-R1)│ ← AI/ML API (Claude 3.5)  │
+    │ ← Featherless (DeepSeek-R1)│ ← AI/ML API (Claude Sonnet)│
     │ Consent, Belmont, assent  │ HIPAA, BAA, retention,    │
     │ requirements              │ de-identification         │
     └─────────────┬─────────────┴─────────────┬─────────────┘
@@ -106,7 +106,7 @@ Researcher: @ProtocolAgent Please review this research protocol.
             [uploads: IRB_Protocol_PEDI-2026-0047.pdf]
 ```
 
-### Step 2 — Protocol Analysis + Risk-Based Routing (Google ADK + Gemini 2.5 Pro)
+### Step 2 — Protocol Analysis + Risk-Based Routing (LangGraph + Gemini 2.5 Pro)
 ProtocolAgent parses the PDF, extracts structured fields, and **routes the review track** based on risk. Both specialists are dispatched **in parallel** — one message, two mentions:
 
 ```
@@ -122,7 +122,7 @@ ProtocolAgent: Protocol parsed.
 
 > A MINIMAL RISK protocol would instead route to `REVIEW TRACK: EXPEDITED (45 CFR 46.110)` — eligible for designated-reviewer sign-off without convening the full board.
 
-### Step 3 — Parallel Specialist Reviews (DeepSeek-R1 ∥ Claude 3.5 Sonnet)
+### Step 3 — Parallel Specialist Reviews (DeepSeek-R1 ∥ Claude Sonnet)
 Ethics and privacy reviews are independent, so they run **concurrently**. Each posts findings to the room and hands off to the Committee — in whichever order they finish:
 
 ```
@@ -193,7 +193,7 @@ The entire Band room conversation — every agent's reasoning, every finding, ev
 ## 🛠️ Tech Stack & Coverage
 
 * **Agent Coordination**: [Band SDK](https://app.band.ai/) (Mentions, channel subscriptions, dynamic add participant)
-* **AI/ML API**: Claude 3.5 Sonnet, Gemini 2.5 Pro, Llama 3.3
+* **AI/ML API**: Claude Sonnet 4.6, Gemini 2.5 Pro
 * **Featherless AI**: DeepSeek-R1-Distill-Llama-70B, Llama-3.1-70B-Instruct
 * **Backend**: FastAPI, WebSockets
 * **Frontend**: Next.js (TypeScript), Tailwind CSS
@@ -207,7 +207,7 @@ The entire Band room conversation — every agent's reasoning, every finding, ev
 ethicsboard-ai/
 ├── agents/
 │   ├── protocol_agent/
-│   │   └── agent.py              # Google ADK + Gemini agent definition
+│   │   └── agent.py              # LangGraph + Gemini agent definition
 │   ├── ethics_agent/
 │   │   └── agent.py              # Featherless AI DeepSeek-R1 agent
 │   ├── privacy_agent/
@@ -325,7 +325,7 @@ EthicsBoard AI coordinates four distinct agents across four separate model endpo
 ## 👥 Team
 Built for the Band of Agents Hackathon · June 12–19, 2026
 
-**Asad Javed** — Agent architecture, Google ADK, FastAPI, Band integration, demo narrative
+**Asad Javed** — Agent architecture, LangGraph, FastAPI, Band integration, demo narrative
 * Founder, Premium Logic · AI Engineer
 * [LinkedIn](https://linkedin.com/in/malikasadjaved) · [GitHub](https://github.com/Malikasadjaved)
 

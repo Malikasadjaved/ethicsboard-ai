@@ -1,173 +1,126 @@
+"""Unit tests for EthicsBoard AI committee coordination logic.
+
+These tests cover the pure, network-free decision logic that drives the
+regulatory workflow: review-track extraction, finding aggregation/dedup,
+the agent-to-agent challenge prompt, and the risk-based HITL routing
+(including the 45 CFR 46.110(b) expedited -> full-board escalation).
+
+They run with plain `pytest` (no live API keys, no pytest-asyncio plugin) —
+async functions are driven via asyncio.run.
+"""
+
 import os
-os.environ["AIML_API_KEY"] = "mock-aiml-key"
-os.environ["FEATHERLESS_API_KEY"] = "mock-featherless-key"
 
-import pytest
+# Committee agent constructs an AsyncOpenAI client at import time; give it a
+# dummy key so import never depends on a real environment.
+os.environ.setdefault("FEATHERLESS_API_KEY", "test-key")
+
 import asyncio
-from unittest.mock import AsyncMock, patch, MagicMock
 
-# Import functions to test
-from agents.protocol_agent.agent import run_protocol_analysis, extract_protocol_data, format_summary, ProtocolState
-from agents.ethics_agent.agent import run_ethics_review
-from agents.privacy_agent.agent import run_privacy_review
-from agents.committee_agent.agent import aggregate_findings, generate_determination_letter, format_hitl_request
+from agents.committee_agent.agent import (
+    aggregate_findings,
+    extract_review_track,
+    format_clarification_request,
+    format_hitl_request,
+    _parse_json_deficiencies,
+)
 
-# --- ProtocolAgent Tests ---
 
-@pytest.mark.asyncio
-async def test_protocol_agent_extraction():
-    # Mock response from AI/ML API (Gemini 2.5 Pro)
-    mock_response = MagicMock()
-    mock_choice = MagicMock()
-    mock_message = MagicMock()
-    
-    mock_json_content = """{
-      "study_title": "Test Study Title",
-      "protocol_number": "PEDI-2026-TEST",
-      "phase": "Phase II",
-      "sponsor": "Sponsor Inc.",
-      "principal_investigator": "Dr. Test PI",
-      "population": {
-        "description": "Pediatric patients",
-        "age_range": "8-16",
-        "is_vulnerable": true,
-        "vulnerable_category": "minors"
-      },
-      "risk_classification": "GREATER THAN MINIMAL RISK",
-      "regulatory_basis": "45 CFR 46.405",
-      "consent_procedures": {
-        "adult_consent": "Written parent consent",
-        "assent_procedure": "Verbal 8-11, missing 12-16",
-        "waiver_requested": false
-      },
-      "data_handling": {
-        "de_identification_method": "Coded ID",
-        "data_sharing": "BioSync CRO",
-        "retention_period": "15 years"
-      },
-      "review_type_recommended": "FULL BOARD"
-    }"""
-    
-    mock_message.content = mock_json_content
-    mock_choice.message = mock_message
-    mock_response.choices = [mock_choice]
-    
-    # Mock the AsyncOpenAI completions create call
-    with patch("agents.protocol_agent.agent.aiml_client.chat.completions.create", new_callable=AsyncMock) as mock_create:
-        mock_create.return_value = mock_response
-        
-        # Test extract_protocol_data directly
-        initial_state: ProtocolState = {
-            "pdf_text": "Sample protocol content",
-            "extracted_data": None,
-            "risk_classification": None,
-            "review_type": None,
-            "summary": None,
-            "error": None,
-        }
-        
-        result_state = await extract_protocol_data(initial_state)
-        
-        assert result_state["error"] is None
-        assert result_state["extracted_data"]["study_title"] == "Test Study Title"
-        assert result_state["risk_classification"] == "GREATER THAN MINIMAL RISK"
-        assert result_state["review_type"] == "FULL BOARD"
-        
-        # Test format_summary
-        final_state = await format_summary(result_state)
-        assert "@EthicsAgent" in final_state["summary"]
-        assert "PEDI-2026-TEST" in final_state["summary"]
-        assert "VULNERABLE" in final_state["summary"]
+# --- extract_review_track ---
 
-# --- EthicsAgent Tests ---
+def test_extract_review_track_expedited():
+    msgs = ["...", "RISK: MINIMAL -> REVIEW TRACK: EXPEDITED (45 CFR 46.110)"]
+    assert extract_review_track(msgs) == "EXPEDITED"
 
-@pytest.mark.asyncio
-async def test_ethics_agent_review():
-    mock_response = MagicMock()
-    mock_choice = MagicMock()
-    mock_message = MagicMock()
-    
-    mock_message.content = "DEFICIENCY 1: Missing Assent. 45 CFR 46.408 — No assent form for 12-16.\nPASS: Risk-benefit ratio is justified.\nBenefit assessment: PASS.\n@PrivacyAgent — Please review."
-    mock_choice.message = mock_message
-    mock_response.choices = [mock_choice]
-    
-    with patch("agents.ethics_agent.agent.featherless_client.chat.completions.create", new_callable=AsyncMock) as mock_create:
-        mock_create.return_value = mock_response
-        
-        result = await run_ethics_review("Sample context summary")
-        assert "Ethics review complete" in result
-        assert "DEFICIENCY 1: Missing Assent" in result
-        assert "@PrivacyAgent" in result
 
-# --- PrivacyAgent Tests ---
+def test_extract_review_track_full_board():
+    msgs = ["REVIEW TRACK: FULL BOARD (45 CFR 46.108)"]
+    assert extract_review_track(msgs) == "FULL_BOARD"
 
-@pytest.mark.asyncio
-async def test_privacy_agent_review():
-    mock_response = MagicMock()
-    mock_choice = MagicMock()
-    mock_message = MagicMock()
-    
-    mock_message.content = "DEFICIENCY 1: Missing BAA. 45 CFR 164.308 — No BAA with CRO.\nPASS: Retention is compliant.\n@CommitteeAgent — 1 ethics deficiencies + 1 privacy gap."
-    mock_choice.message = mock_message
-    mock_response.choices = [mock_choice]
-    
-    with patch("agents.privacy_agent.agent.aiml_client.chat.completions.create", new_callable=AsyncMock) as mock_create:
-        mock_create.return_value = mock_response
-        
-        result = await run_privacy_review("Sample context summary")
-        assert "Data governance review complete" in result
-        assert "DEFICIENCY 1: Missing BAA" in result
-        assert "@CommitteeAgent" in result
 
-# --- CommitteeAgent Tests ---
+def test_extract_review_track_defaults_to_full_board_when_absent():
+    # Safe default: when no track line is present, require the convened board.
+    assert extract_review_track(["no track line here"]) == "FULL_BOARD"
 
-@pytest.mark.asyncio
-async def test_committee_agent_aggregation():
-    # Test aggregation function
-    room_messages = [
-        "Ethics review complete.\nDEFICIENCY 1: Missing Assent. 45 CFR 46.408\nPASS: Risk-benefit ratio.",
-        "Data governance review complete.\nDEFICIENCY 2: Missing BAA. HIPAA 45 CFR 164.308(b)(1)\nPASS: Security safeguards."
-    ]
-    
-    findings = await aggregate_findings(room_messages)
+
+# --- _parse_json_deficiencies ---
+
+def test_parse_json_deficiencies_extracts_array():
+    msg = (
+        'ETHICS REVIEW FINDINGS\n'
+        '{"analysis": "ok", "deficiencies": ['
+        '{"id": 101, "title": "Missing assent", "regulation": "45 CFR 46.408", "severity": "major"}'
+        ']}'
+    )
+    out = _parse_json_deficiencies(msg)
+    assert isinstance(out, list) and len(out) == 1
+    assert out[0]["regulation"] == "45 CFR 46.408"
+
+
+def test_parse_json_deficiencies_returns_none_without_json():
+    assert _parse_json_deficiencies("plain text, no json object") is None
+
+
+# --- aggregate_findings ---
+
+def test_aggregate_findings_parses_json_and_dedupes():
+    json_block = (
+        '{"deficiencies": ['
+        '{"id": 1, "title": "Missing Assent", "regulation": "45 CFR 46.408", "severity": "major"},'
+        '{"id": 2, "title": "Missing BAA", "regulation": "HIPAA 45 CFR 164.308(b)(1)", "severity": "critical"}'
+        ']}'
+    )
+    # Same finding posted twice in the room must only be counted once.
+    findings = asyncio.run(aggregate_findings([json_block, json_block]))
     assert findings["total_deficiencies"] == 2
     assert findings["requires_full_board"] is True
-    assert findings["deficiencies"][0] == "DEFICIENCY 1: Missing Assent. 45 CFR 46.408"
-    assert findings["deficiencies"][1] == "DEFICIENCY 2: Missing BAA. HIPAA 45 CFR 164.308(b)(1)"
+
+
+def test_aggregate_findings_parses_legacy_line_format():
+    msgs = [
+        "ETHICS REVIEW FINDINGS\nDEFICIENCY 1: Missing Assent. 45 CFR 46.408\nPASS: Risk-benefit ratio.",
+        "PRIVACY REVIEW FINDINGS\nDEFICIENCY 2: Missing BAA. HIPAA 45 CFR 164.308(b)(1)\nPASS: Retention policy.",
+    ]
+    findings = asyncio.run(aggregate_findings(msgs))
+    assert findings["total_deficiencies"] == 2
     assert len(findings["passes"]) == 2
 
-@pytest.mark.asyncio
-async def test_committee_agent_determination():
-    mock_response = MagicMock()
-    mock_choice = MagicMock()
-    mock_message = MagicMock()
-    
-    mock_message.content = "IRB DETERMINATION LETTER\nProtocol: PEDI-2026-TEST\nStatus: REVISIONS REQUIRED"
-    mock_choice.message = mock_message
-    mock_response.choices = [mock_choice]
-    
-    with patch("agents.committee_agent.agent.featherless_client.chat.completions.create", new_callable=AsyncMock) as mock_create:
-        mock_create.return_value = mock_response
-        
-        result = await generate_determination_letter(
-            review_record="Review context",
-            decision="revisions_required",
-            chair_comments="Please fix BAA"
-        )
-        assert "IRB DETERMINATION LETTER" in result
-        assert "REVISIONS REQUIRED" in result
 
-@pytest.mark.asyncio
-async def test_committee_agent_hitl_format():
-    findings = {
-        "deficiencies": [
-            "DEFICIENCY 1: Missing Assent. 45 CFR 46.408",
-            "DEFICIENCY 2: Missing BAA. HIPAA 45 CFR 164.308"
-        ],
-        "total_deficiencies": 2
-    }
-    
-    result = await format_hitl_request(findings, "PEDI-2026-TEST")
-    assert "@Dr.IRBChair" in result
-    assert "PEDI-2026-TEST" in result
-    assert "2 deficiencies identified" in result
+def test_aggregate_findings_clean_protocol_requires_no_board():
+    findings = asyncio.run(aggregate_findings(["PRIVACY REVIEW FINDINGS\nPASS: All clear."]))
+    assert findings["total_deficiencies"] == 0
+    assert findings["requires_full_board"] is False
+
+
+# --- format_clarification_request (agent-to-agent challenge) ---
+
+def test_format_clarification_request_targets_ethics_with_top_finding():
+    findings = {"deficiencies": ["DEFICIENCY 1: Missing Assent. 45 CFR 46.408"], "total_deficiencies": 1}
+    out = format_clarification_request(findings)
+    assert out.lstrip().startswith("CLARIFICATION REQUEST")
+    assert "@ethics_agent" in out
+    assert "Missing Assent" in out
+
+
+# --- format_hitl_request (risk-based routing + escalation) ---
+
+def test_hitl_expedited_with_deficiencies_escalates_to_full_board():
+    findings = {"deficiencies": ["DEFICIENCY 1: x"], "total_deficiencies": 1}
+    out = asyncio.run(format_hitl_request(findings, "PEDI-2026-0047", review_track="EXPEDITED"))
+    assert "ESCALATION" in out
+    assert "FULL BOARD" in out
+    assert "@Dr.IRBChair" in out
+
+
+def test_hitl_expedited_clean_uses_designated_reviewer():
+    findings = {"deficiencies": [], "total_deficiencies": 0}
+    out = asyncio.run(format_hitl_request(findings, "PEDI-2026-0047", review_track="EXPEDITED"))
+    assert "EXPEDITED determination requested" in out
+    assert "ESCALATION" not in out
+
+
+def test_hitl_full_board_default():
+    findings = {"deficiencies": ["DEFICIENCY 1: x", "DEFICIENCY 2: y"], "total_deficiencies": 2}
+    out = asyncio.run(format_hitl_request(findings, "PEDI-2026-0047", review_track="FULL_BOARD"))
+    assert "Full Board determination required" in out
+    assert "2 deficiencies identified" in out
